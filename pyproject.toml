@@ -1,0 +1,17 @@
+[project]
+name = "xiaoman-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+include = '\.pyi?$'
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["F"]
+

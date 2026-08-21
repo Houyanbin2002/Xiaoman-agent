@@ -1,0 +1,93 @@
+.desktop-app .memory-map, .desktop-app .memory-workbench-tabs, .desktop-app .memory-library-toolbar, .desktop-app .memory-panel { width: 100%; max-width: 1120px; margin-inline: auto; }
+.desktop-app .memory-map { padding: 22px; border: 1px solid var(--xm-line); border-radius: var(--xm-radius-panel); background: linear-gradient(145deg,#24263d,#383252 60%,#53386b); color: white; box-shadow: 0 20px 45px rgba(42,40,67,.18); }
+.desktop-app .memory-map-intro strong { color: white; font-size: 18px; font-weight: 820; }
+.desktop-app .memory-map-intro p, .desktop-app .memory-map-intro small { color: rgba(255,255,255,.65); }
+.desktop-app .memory-map-intro { border-right-color: rgba(255,255,255,.12); }
+.desktop-app .memory-map-orbit { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.09); color: white; }
+.desktop-app .memory-map-layers { background: transparent; }
+.desktop-app .memory-map-layers button { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.07); color: rgba(255,255,255,.72); }
+.desktop-app .memory-map-layers button:hover, .desktop-app .memory-map-layers button.active { border-color: rgba(255,255,255,.32); background: rgba(255,255,255,.16); color: white; }
+.desktop-app .memory-map-layers button strong { color: inherit; }
+.desktop-app .memory-map-layers > svg { color: rgba(255,255,255,.35); }
+.desktop-app .memory-consumers { color: rgba(255,255,255,.55); }
+.desktop-app .memory-consumers { border-left-color: rgba(255,255,255,.12); }
+.desktop-app .memory-consumers span { border-color: rgba(255,255,255,.13); background: rgba(255,255,255,.07); color: rgba(255,255,255,.78); }
+.desktop-app .memory-workbench-tabs { margin-top: 18px; padding: 5px; border: 1px solid var(--xm-line); border-radius: 14px; background: #eeeef3; }
+.desktop-app .memory-workbench-tabs button { min-height: 39px; border-radius: 10px; font-weight: 740; }
+.desktop-app .memory-workbench-tabs button.active { background: white; color: #5147b8; box-shadow: 0 6px 16px rgba(45,45,66,.08); }
+.desktop-app .memory-library-toolbar { margin-top: 12px; border-color: var(--xm-line); border-radius: 14px; background: rgba(255,255,255,.88); }
+.desktop-app .memory-panel { margin-top: 12px; overflow: hidden; border: 1px solid var(--xm-line); border-radius: var(--xm-radius-card); background: rgba(255,255,255,.92); }
+.desktop-app .memory-panel-heading { padding: 19px 20px; }
+.desktop-app .memory-panel-heading h2 { color: #31323a; font-size: 16px; font-weight: 820; }
+.desktop-app .memory-panel-heading p { color: var(--xm-text-muted); font-size: 11px; }
+.desktop-app .stored-memory-row { min-height: 98px; padding: 17px 20px; }
+.desktop-app .stored-memory-icon { width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(135deg,#e7f2ff,#eee8ff); color: #5147b8; }
+.desktop-app .stored-memory-main > strong { color: #30313a; font-size: 13px; font-weight: 790; }
+.desktop-app .stored-memory-main > p { color: var(--xm-text-muted); font-size: 11px; }
+
+.desktop-app .memory-knowledge-graph { width: 100%; max-width: 1120px; margin: 24px auto 34px; }
+.desktop-app .memory-graph-heading { position: relative; z-index: 2; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 0 8px 14px; }
+.desktop-app .memory-graph-heading small { color: #7569c7; font-size: 10px; font-weight: 760; letter-spacing: .08em; }
+.desktop-app .memory-graph-heading h2 { margin: 4px 0 0; color: #292a38; font-size: 22px; font-weight: 850; letter-spacing: -.025em; }
+.desktop-app .memory-graph-heading p { margin: 5px 0 0; color: #89899a; font-size: 11px; }
+.desktop-app .memory-graph-controls { display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: 999px; background: rgba(255,255,255,.76); box-shadow: 0 12px 28px rgba(56,48,105,.09); backdrop-filter: blur(16px); }
+.desktop-app .memory-graph-controls button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #6059a5; cursor: pointer; transition: background 140ms ease, transform 140ms ease; }
+.desktop-app .memory-graph-controls button:hover { background: #eeecff; transform: translateY(-1px); }
+.desktop-app .memory-graph-controls button:focus-visible { outline: 2px solid #6558d8; outline-offset: 2px; }
+.desktop-app .memory-graph-controls span { min-width: 43px; color: #858397; font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
+.desktop-app .memory-graph-stage { position: relative; min-height: 620px; overflow: hidden; border: 0; border-radius: 38px; background: radial-gradient(circle at 50% 49%,rgba(96,78,222,.12),transparent 23%),radial-gradient(circle at 15% 28%,rgba(51,119,239,.08),transparent 24%),radial-gradient(circle at 83% 72%,rgba(143,73,225,.08),transparent 26%); }
+.desktop-app .memory-graph-stage::before { content: ""; position: absolute; inset: 8% 12%; pointer-events: none; background: radial-gradient(ellipse at center,rgba(255,255,255,.7),transparent 68%); filter: blur(30px); }
+.desktop-app .memory-graph-stage > svg { position: relative; z-index: 1; width: 100%; height: 620px; display: block; overflow: visible; cursor: grab; touch-action: none; user-select: none; }
+.desktop-app .memory-graph-stage > svg:active { cursor: grabbing; }
+.desktop-app .memory-graph-edge { opacity: .54; transition: opacity 180ms ease; }
+.desktop-app .memory-graph-edge line { stroke: #aaa7cb; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.desktop-app .memory-graph-edge text { fill: #8c89a6; font-size: 9px; font-weight: 650; paint-order: stroke; stroke: rgba(248,248,253,.94); stroke-width: 5px; stroke-linejoin: round; }
+.desktop-app .memory-graph-edge.highlighted { opacity: 1; }
+.desktop-app .memory-graph-edge.highlighted line { stroke: #675fd1; stroke-width: 2; }
+.desktop-app .memory-graph-edge.dimmed { opacity: .08; }
+.desktop-app .memory-graph-node { cursor: grab; outline: none; transition: opacity 170ms ease; }
+.desktop-app .memory-graph-node:active { cursor: grabbing; }
+.desktop-app .memory-graph-node-halo { fill: rgba(98,84,211,.06); opacity: 0; transition: opacity 160ms ease; }
+.desktop-app .memory-graph-node-core { fill: #7268d8; stroke: rgba(255,255,255,.92); stroke-width: 3; transition: transform 170ms ease, fill 170ms ease; transform-box: fill-box; transform-origin: center; }
+.desktop-app .memory-graph-node:hover .memory-graph-node-core, .desktop-app .memory-graph-node:focus-visible .memory-graph-node-core { transform: scale(1.08); }
+.desktop-app .memory-graph-node:hover .memory-graph-node-halo, .desktop-app .memory-graph-node.selected .memory-graph-node-halo { opacity: 1; }
+.desktop-app .memory-graph-node.selected .memory-graph-node-core { stroke-width: 4; }
+.desktop-app .memory-graph-node.dimmed { opacity: .13; }
+.desktop-app .memory-graph-node.kind-self .memory-graph-node-core { fill: #443b9f; }
+.desktop-app .memory-graph-node.kind-relationship .memory-graph-node-core { fill: #d16f9e; }
+.desktop-app .memory-graph-node.kind-preference .memory-graph-node-core { fill: #665ee0; }
+.desktop-app .memory-graph-node.kind-fact .memory-graph-node-core { fill: #4b86d9; }
+.desktop-app .memory-graph-node.kind-requested .memory-graph-node-core { fill: #9a5bd1; }
+.desktop-app .memory-graph-node.kind-temporary_state .memory-graph-node-core { fill: #d19a57; }
+.desktop-app .memory-graph-node.kind-historical_event .memory-graph-node-core, .desktop-app .memory-graph-node.kind-episode .memory-graph-node-core { fill: #4c9a9c; }
+.desktop-app .memory-graph-node.kind-procedure .memory-graph-node-core { fill: #697487; }
+.desktop-app .memory-graph-node.kind-entity .memory-graph-node-core { fill: #8b83b4; }
+.desktop-app .memory-graph-node-icon { color: white; stroke: white; pointer-events: none; }
+.desktop-app .memory-graph-node-label { fill: #4b4a5e; font-size: 10.5px; font-weight: 760; paint-order: stroke; stroke: rgba(249,249,253,.96); stroke-width: 5px; stroke-linejoin: round; pointer-events: none; }
+.desktop-app .memory-graph-node-count { fill: white; font-size: 8px; font-weight: 850; text-anchor: middle; pointer-events: none; }
+.desktop-app .memory-graph-detail { position: absolute; z-index: 3; right: 24px; bottom: 22px; width: min(320px,calc(100% - 48px)); max-height: 260px; overflow: auto; padding: 20px; border: 0; border-radius: 22px; background: rgba(39,36,66,.9); color: white; box-shadow: 0 24px 60px rgba(35,30,76,.24); backdrop-filter: blur(22px); }
+.desktop-app .memory-graph-detail > small { color: #bdb7ef; font-size: 9px; font-weight: 760; letter-spacing: .08em; }
+.desktop-app .memory-graph-detail h3 { margin: 5px 28px 9px 0; color: white; font-size: 17px; font-weight: 820; }
+.desktop-app .memory-graph-detail p { margin: 4px 0 0; color: rgba(255,255,255,.7); font-size: 10.5px; line-height: 1.65; }
+.desktop-app .memory-graph-detail-close { position: absolute; top: 14px; right: 14px; width: 29px; height: 29px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(255,255,255,.09); color: rgba(255,255,255,.72); cursor: pointer; }
+.desktop-app .memory-graph-record + .memory-graph-record { margin-top: 13px; padding-top: 13px; border-top: 1px solid rgba(255,255,255,.1); }
+.desktop-app .memory-graph-record strong { color: white; font-size: 11.5px; font-weight: 760; }
+.desktop-app .memory-graph-detail-meta { display: flex; flex-wrap: wrap; gap: 6px 11px; margin-top: 10px; color: rgba(255,255,255,.46); font-size: 8.5px; }
+.desktop-app .memory-graph-loading, .desktop-app .memory-graph-empty { width: 100%; max-width: 1120px; min-height: 500px; margin: 18px auto 30px; display: grid; place-items: center; align-content: center; gap: 9px; color: #746db3; text-align: center; background: radial-gradient(circle,rgba(103,88,220,.1),transparent 42%); }
+.desktop-app .memory-graph-loading { grid-auto-flow: column; min-height: 360px; }
+.desktop-app .memory-graph-empty > span { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 50%; background: linear-gradient(135deg,#e7e9ff,#f1e9ff); color: #6258c7; }
+.desktop-app .memory-graph-empty h2 { margin: 8px 0 0; color: #343443; font-size: 17px; }
+.desktop-app .memory-graph-empty p { max-width: 380px; margin: 0; color: #89899a; font-size: 11px; }
+
+@media (max-width: 760px) {
+  .desktop-app .memory-map-layers.unified { grid-template-columns: 1fr; }
+  .desktop-app .memory-map-layers > svg { display: none; }
+  .desktop-app .memory-graph-heading { align-items: flex-start; flex-direction: column; padding-inline: 2px; }
+  .desktop-app .memory-graph-stage, .desktop-app .memory-graph-stage > svg { min-height: 540px; height: 540px; }
+  .desktop-app .memory-graph-stage { border-radius: 24px; }
+  .desktop-app .memory-graph-detail { right: 12px; bottom: 12px; width: calc(100% - 24px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-app .memory-graph-node, .desktop-app .memory-graph-node-core, .desktop-app .memory-graph-edge { transition: none; }
+}

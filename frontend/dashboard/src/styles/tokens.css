@@ -1,0 +1,30 @@
+:root {
+  font-family: "Noto Sans SC", Inter, "Microsoft YaHei", system-ui, sans-serif;
+  color: #20212a;
+  background: #f6f6fa;
+
+  --xm-bg: #f6f6fa;
+  --xm-surface: #ffffff;
+  --xm-surface-soft: #fafafd;
+  --xm-surface-muted: #f0f0f4;
+  --xm-line: #e3e3ea;
+  --xm-line-strong: #d5d5df;
+  --xm-text: #20212a;
+  --xm-text-muted: #6c6c78;
+  --xm-text-subtle: #9696a0;
+  --xm-brand-blue: #1268ef;
+  --xm-brand-violet: #5f42e9;
+  --xm-brand-magenta: #a83ec8;
+  --xm-highlight-cyan: #55d5ff;
+  --xm-success: #218a63;
+  --xm-warning: #a76816;
+  --xm-danger: #bd4a55;
+  --xm-info: #276fbf;
+  --xm-priority-gradient: linear-gradient(125deg, #115fdf 0%, #4d43df 52%, #7938cb 100%);
+  --xm-insight-gradient: linear-gradient(145deg, #20213f 0%, #34305d 56%, #513373 100%);
+  --xm-radius-control: 11px;
+  --xm-radius-card: 18px;
+  --xm-radius-panel: 22px;
+  --xm-shadow-card: 0 18px 48px rgba(38, 37, 65, 0.1);
+  --xm-shadow-priority: 0 23px 50px rgba(63, 61, 210, 0.28);
+}

@@ -1,0 +1,297 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1700" viewBox="0 0 2400 1700">
+  <defs>
+    <style>
+      .title { font: 700 42px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #17202a; }
+      .subtitle { font: 400 20px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #566573; }
+      .lane-title { font: 700 27px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #17202a; }
+      .node-title { font: 700 20px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #17202a; }
+      .node-text { font: 400 16px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #34495e; }
+      .small { font: 400 14px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #5d6d7e; }
+      .tiny { font: 400 13px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #5d6d7e; }
+      .white-title { font: 700 20px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #ffffff; }
+      .white-text { font: 400 15px "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #ffffff; }
+      .arrow { stroke: #52616b; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .arrow-blue { stroke: #2471a3; stroke-width: 3; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-green { stroke: #16856b; stroke-width: 3; fill: none; marker-end: url(#arrow-green); }
+      .arrow-orange { stroke: #c56a15; stroke-width: 3; fill: none; marker-end: url(#arrow-orange); }
+      .arrow-dashed { stroke: #8e44ad; stroke-width: 3; stroke-dasharray: 10 8; fill: none; marker-end: url(#arrow-purple); }
+      .feedback { stroke: #2471a3; stroke-width: 2.5; stroke-dasharray: 8 7; fill: none; marker-end: url(#arrow-blue); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#52616b"/></marker>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#2471a3"/></marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#16856b"/></marker>
+    <marker id="arrow-orange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#c56a15"/></marker>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#8e44ad"/></marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#1b2631" flood-opacity="0.14"/></filter>
+  </defs>
+
+  <rect width="2400" height="1700" fill="#f7f9fb"/>
+  <rect x="0" y="0" width="2400" height="112" fill="#ffffff"/>
+  <rect x="0" y="109" width="2400" height="3" fill="#2e86c1"/>
+  <text x="70" y="58" class="title">Xiaoman Agent → 小满个人助手：项目框架与功能流程</text>
+  <text x="72" y="91" class="subtitle">依据当前代码入口、运行时装配、Agent Loop、主动触达、插件、MCP、记忆与 Dashboard 整理</text>
+  <rect x="1945" y="30" width="18" height="18" rx="3" fill="#ffffff" stroke="#2471a3" stroke-width="3"/>
+  <text x="1976" y="45" class="small">当前已实现</text>
+  <rect x="2140" y="30" width="18" height="18" rx="3" fill="#ffffff" stroke="#8e44ad" stroke-width="3" stroke-dasharray="6 4"/>
+  <text x="2171" y="45" class="small">小满规划扩展</text>
+
+  <!-- Startup and assembly -->
+  <rect x="60" y="145" width="2280" height="220" rx="8" fill="#eef4f8" stroke="#9fb9c9" stroke-width="2"/>
+  <text x="90" y="185" class="lane-title">1. 启动与运行时装配</text>
+
+  <g>
+    <rect x="100" y="220" width="245" height="90" rx="6" fill="#ffffff" stroke="#5d6d7e" stroke-width="2"/>
+    <text x="222" y="255" text-anchor="middle" class="node-title">main.py</text>
+    <text x="222" y="282" text-anchor="middle" class="node-text">服务 / CLI / Dashboard 入口</text>
+
+    <rect x="425" y="220" width="260" height="90" rx="6" fill="#ffffff" stroke="#5d6d7e" stroke-width="2"/>
+    <text x="555" y="255" text-anchor="middle" class="node-title">Config + Workspace</text>
+    <text x="555" y="282" text-anchor="middle" class="node-text">模型、通道、插件、数据目录</text>
+
+    <rect x="765" y="205" width="300" height="120" rx="6" fill="#2471a3"/>
+    <text x="915" y="250" text-anchor="middle" class="white-title">AppRuntime</text>
+    <text x="915" y="280" text-anchor="middle" class="white-text">统一启动 / 并发运行 / 优雅关闭</text>
+    <text x="915" y="304" text-anchor="middle" class="white-text">bootstrap/app.py</text>
+
+    <rect x="1145" y="205" width="300" height="120" rx="6" fill="#16856b"/>
+    <text x="1295" y="250" text-anchor="middle" class="white-title">CoreRuntime</text>
+    <text x="1295" y="280" text-anchor="middle" class="white-text">Provider、Bus、Tools、Memory</text>
+    <text x="1295" y="304" text-anchor="middle" class="white-text">Session、Scheduler、AgentLoop</text>
+  </g>
+
+  <rect x="1525" y="195" width="760" height="140" rx="6" fill="#ffffff" stroke="#9fb9c9" stroke-width="2"/>
+  <text x="1905" y="225" text-anchor="middle" class="node-title">AppRuntime 拉起的长期服务</text>
+  <g>
+    <rect x="1550" y="245" width="130" height="58" rx="5" fill="#d6eaf8" stroke="#5dade2"/>
+    <text x="1615" y="269" text-anchor="middle" class="node-text">Channels</text><text x="1615" y="290" text-anchor="middle" class="tiny">IPC / TG / QQ</text>
+    <rect x="1695" y="245" width="125" height="58" rx="5" fill="#d5f5e3" stroke="#52be80"/>
+    <text x="1758" y="279" text-anchor="middle" class="node-text">AgentLoop</text>
+    <rect x="1835" y="245" width="125" height="58" rx="5" fill="#fdebd0" stroke="#f5b041"/>
+    <text x="1898" y="279" text-anchor="middle" class="node-text">Scheduler</text>
+    <rect x="1975" y="245" width="135" height="58" rx="5" fill="#f5eef8" stroke="#af7ac5"/>
+    <text x="2043" y="269" text-anchor="middle" class="node-text">Proactive</text><text x="2043" y="290" text-anchor="middle" class="tiny">主动触达</text>
+    <rect x="2125" y="245" width="135" height="58" rx="5" fill="#f2f3f4" stroke="#85929e"/>
+    <text x="2193" y="269" text-anchor="middle" class="node-text">Dashboard</text><text x="2193" y="290" text-anchor="middle" class="tiny">:2236</text>
+  </g>
+  <path d="M345 265 H413" class="arrow"/>
+  <path d="M685 265 H753" class="arrow"/>
+  <path d="M1065 265 H1133" class="arrow-green"/>
+  <path d="M1445 265 H1513" class="arrow-green"/>
+
+  <!-- Passive flow -->
+  <rect x="60" y="395" width="1485" height="620" rx="8" fill="#f4f9fc" stroke="#7fb3d5" stroke-width="2.5"/>
+  <text x="90" y="438" class="lane-title">2A. 用户对话：被动 Agent 主链路</text>
+  <text x="1455" y="437" text-anchor="end" class="small">agent/looping + agent/core/passive_turn.py</text>
+
+  <g>
+    <rect x="95" y="485" width="170" height="88" rx="6" fill="#ffffff" stroke="#2471a3" stroke-width="2"/>
+    <text x="180" y="520" text-anchor="middle" class="node-title">用户</text>
+    <text x="180" y="547" text-anchor="middle" class="node-text">消息 / 指令</text>
+
+    <rect x="320" y="475" width="210" height="108" rx="6" fill="#d6eaf8" stroke="#2471a3" stroke-width="2"/>
+    <text x="425" y="511" text-anchor="middle" class="node-title">ChannelHost</text>
+    <text x="425" y="538" text-anchor="middle" class="node-text">CLI · IPC · Telegram</text>
+    <text x="425" y="562" text-anchor="middle" class="node-text">QQ · 插件通道</text>
+
+    <rect x="585" y="485" width="190" height="88" rx="6" fill="#ffffff" stroke="#2471a3" stroke-width="2"/>
+    <text x="680" y="520" text-anchor="middle" class="node-title">Message Bus</text>
+    <text x="680" y="547" text-anchor="middle" class="node-text">收件 / 发件 / 路由</text>
+
+    <rect x="830" y="475" width="220" height="108" rx="6" fill="#2471a3"/>
+    <text x="940" y="516" text-anchor="middle" class="white-title">AgentLoop</text>
+    <text x="940" y="544" text-anchor="middle" class="white-text">按 session 串行处理</text>
+    <text x="940" y="567" text-anchor="middle" class="white-text">处理中断与后台事件</text>
+
+    <rect x="1105" y="465" width="250" height="128" rx="6" fill="#16856b"/>
+    <text x="1230" y="503" text-anchor="middle" class="white-title">PassiveTurnPipeline</text>
+    <text x="1230" y="531" text-anchor="middle" class="white-text">会话上下文 + 记忆召回</text>
+    <text x="1230" y="555" text-anchor="middle" class="white-text">Prompt + 生命周期 Hook</text>
+    <text x="1230" y="579" text-anchor="middle" class="white-text">模型推理与工具循环</text>
+
+    <rect x="1110" y="650" width="240" height="105" rx="6" fill="#fff4df" stroke="#c56a15" stroke-width="2"/>
+    <text x="1230" y="687" text-anchor="middle" class="node-title">LLM Provider</text>
+    <text x="1230" y="714" text-anchor="middle" class="node-text">当前：deepseek-v4-flash</text>
+    <text x="1230" y="738" text-anchor="middle" class="small">OpenAI 兼容接口</text>
+  </g>
+
+  <path d="M265 529 H308" class="arrow-blue"/>
+  <path d="M530 529 H573" class="arrow-blue"/>
+  <path d="M775 529 H818" class="arrow-blue"/>
+  <path d="M1050 529 H1093" class="arrow-blue"/>
+  <path d="M1230 593 V638" class="arrow-orange"/>
+  <path d="M1110 702 H1065 V616 H1135" class="feedback"/>
+  <text x="1050" y="685" text-anchor="end" class="small">多步推理</text>
+
+  <!-- LLM branches -->
+  <polygon points="910,665 975,705 910,745 845,705" fill="#ffffff" stroke="#2471a3" stroke-width="2.5"/>
+  <text x="910" y="700" text-anchor="middle" class="node-text">模型决定</text>
+  <text x="910" y="721" text-anchor="middle" class="small">下一步</text>
+  <path d="M1110 702 H988" class="arrow-blue"/>
+
+  <rect x="105" y="825" width="250" height="115" rx="6" fill="#ffffff" stroke="#16856b" stroke-width="2"/>
+  <text x="230" y="860" text-anchor="middle" class="node-title">直接回复</text>
+  <text x="230" y="887" text-anchor="middle" class="node-text">Outbound Bus → 原通道</text>
+  <text x="230" y="912" text-anchor="middle" class="small">用户收到最终答案</text>
+
+  <rect x="430" y="805" width="270" height="150" rx="6" fill="#ffffff" stroke="#c56a15" stroke-width="2"/>
+  <text x="565" y="842" text-anchor="middle" class="node-title">Tool Registry</text>
+  <text x="565" y="870" text-anchor="middle" class="node-text">本地工具 · Memory · Schedule</text>
+  <text x="565" y="895" text-anchor="middle" class="node-text">Shell / Web · MCP 工具</text>
+  <text x="565" y="925" text-anchor="middle" class="small">结果回填后继续模型循环</text>
+
+  <rect x="775" y="805" width="310" height="150" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2"/>
+  <text x="930" y="842" text-anchor="middle" class="node-title">Task Control Surface</text>
+  <text x="930" y="870" text-anchor="middle" class="node-text">task_create · task_manage</text>
+  <text x="930" y="895" text-anchor="middle" class="node-text">写入统一持久化 Task Runtime</text>
+  <text x="930" y="925" text-anchor="middle" class="small">Subagent 不直接暴露给主模型</text>
+
+  <rect x="1160" y="825" width="300" height="115" rx="6" fill="#eafaf1" stroke="#16856b" stroke-width="2"/>
+  <text x="1310" y="860" text-anchor="middle" class="node-title">Turn 收尾</text>
+  <text x="1310" y="887" text-anchor="middle" class="node-text">保存 session / 记忆信号</text>
+  <text x="1310" y="912" text-anchor="middle" class="small">插件 AfterTurn / 事件记录</text>
+
+  <path d="M845 705 H230 V813" class="arrow-green"/>
+  <path d="M875 738 L590 793" class="arrow-orange"/>
+  <path d="M930 745 V793" class="arrow-dashed"/>
+  <path d="M700 880 H1115 V610 H1180" class="feedback"/>
+  <path d="M1085 880 H1125 V790 H970 V757" class="feedback"/>
+  <path d="M355 883 H400 V980 H1310 V952" class="arrow-green"/>
+  <path d="M1085 930 H1148" class="arrow-green"/>
+  <path d="M1085 910 H1535 V890 H1608" class="arrow-dashed"/>
+
+  <!-- Proactive flow -->
+  <rect x="1580" y="395" width="760" height="620" rx="8" fill="#fbf7fc" stroke="#af7ac5" stroke-width="2.5"/>
+  <text x="1610" y="438" class="lane-title">2B. 主动触达与定时任务</text>
+  <text x="2305" y="437" text-anchor="end" class="small">proactive_v2/</text>
+
+  <rect x="1615" y="475" width="180" height="92" rx="6" fill="#ffffff" stroke="#c56a15" stroke-width="2"/>
+  <text x="1705" y="509" text-anchor="middle" class="node-title">触发器</text>
+  <text x="1705" y="536" text-anchor="middle" class="node-text">Scheduler / 插件 Job</text>
+  <text x="1705" y="558" text-anchor="middle" class="small">时间或事件</text>
+
+  <rect x="1615" y="610" width="180" height="110" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2"/>
+  <text x="1705" y="644" text-anchor="middle" class="node-title">数据源</text>
+  <text x="1705" y="671" text-anchor="middle" class="node-text">MCP · RSSHub · Context</text>
+  <text x="1705" y="696" text-anchor="middle" class="small">alerts / content / context</text>
+
+  <rect x="1845" y="500" width="205" height="112" rx="6" fill="#8e44ad"/>
+  <text x="1948" y="541" text-anchor="middle" class="white-title">ProactiveLoop</text>
+  <text x="1948" y="569" text-anchor="middle" class="white-text">周期 tick + 状态持久化</text>
+  <text x="1948" y="593" text-anchor="middle" class="white-text">冷却、预算、去重</text>
+
+  <rect x="2100" y="470" width="200" height="390" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2"/>
+  <text x="2200" y="510" text-anchor="middle" class="node-title">主动处理流水线</text>
+  <rect x="2130" y="535" width="140" height="50" rx="5" fill="#f5eef8" stroke="#af7ac5"/>
+  <text x="2200" y="566" text-anchor="middle" class="node-text">1. Gate 该不该动</text>
+  <path d="M2200 585 V610" class="arrow-dashed"/>
+  <rect x="2130" y="610" width="140" height="50" rx="5" fill="#eaf2f8" stroke="#5dade2"/>
+  <text x="2200" y="641" text-anchor="middle" class="node-text">2. Fetch 拉数据</text>
+  <path d="M2200 660 V685" class="arrow-dashed"/>
+  <rect x="2130" y="685" width="140" height="50" rx="5" fill="#fff4df" stroke="#f5b041"/>
+  <text x="2200" y="716" text-anchor="middle" class="node-text">3. Judge 模型判断</text>
+  <path d="M2200 735 V760" class="arrow-dashed"/>
+  <rect x="2130" y="760" width="140" height="50" rx="5" fill="#eafaf1" stroke="#52be80"/>
+  <text x="2200" y="791" text-anchor="middle" class="node-text">4. Resolve 决策</text>
+  <path d="M2200 810 V835" class="arrow-dashed"/>
+  <text x="2200" y="852" text-anchor="middle" class="small">5. Deliver / Skip</text>
+
+  <rect x="1845" y="680" width="205" height="92" rx="6" fill="#ffffff" stroke="#16856b" stroke-width="2"/>
+  <text x="1948" y="715" text-anchor="middle" class="node-title">主动消息</text>
+  <text x="1948" y="742" text-anchor="middle" class="node-text">Message Push → Channel</text>
+  <text x="1948" y="764" text-anchor="middle" class="small">或记录 skip 原因</text>
+
+  <rect x="1620" y="825" width="430" height="130" rx="6" fill="#eafaf1" stroke="#16856b" stroke-width="2.5"/>
+  <text x="1835" y="860" text-anchor="middle" class="node-title">统一 Task Runtime（已实现）</text>
+  <text x="1835" y="889" text-anchor="middle" class="node-text">步骤依赖 · Agent / Subagent 执行 · 用户输入 / 审批</text>
+  <text x="1835" y="916" text-anchor="middle" class="node-text">SQLite Task Ledger · 重试 · 跨重启恢复</text>
+  <text x="1835" y="941" text-anchor="middle" class="small">task_create / task_manage · Subagent 为内部执行器</text>
+
+  <path d="M1795 521 H1833" class="arrow-orange"/>
+  <path d="M1795 665 H1815 V590 H1833" class="arrow-dashed"/>
+  <path d="M2050 556 H2088" class="arrow-dashed"/>
+  <path d="M2100 710 H2062" class="arrow-green"/>
+  <path d="M1948 772 V813" class="arrow-green"/>
+  <path d="M2050 890 H2200 V872" class="arrow-green"/>
+
+  <!-- Shared capability and storage -->
+  <rect x="60" y="1045" width="2280" height="585" rx="8" fill="#ffffff" stroke="#aeb6bf" stroke-width="2.5"/>
+  <text x="90" y="1090" class="lane-title">3. 两条链路共享的平台能力</text>
+  <text x="2305" y="1089" text-anchor="end" class="small">插件和集成通过边界接入，不直接改 Agent 核心</text>
+
+  <g>
+    <rect x="100" y="1140" width="320" height="155" rx="6" fill="#eef7fb" stroke="#5dade2" stroke-width="2"/>
+    <text x="260" y="1180" text-anchor="middle" class="node-title">Plugin Manager</text>
+    <text x="260" y="1210" text-anchor="middle" class="node-text">Tools · Skills · Hooks · Channels</text>
+    <text x="260" y="1237" text-anchor="middle" class="node-text">Jobs · Dashboard Panel · MCP 声明</text>
+    <text x="260" y="1270" text-anchor="middle" class="small">插件生命周期与运行时激活</text>
+
+    <rect x="465" y="1140" width="320" height="155" rx="6" fill="#fff8e8" stroke="#f5b041" stroke-width="2"/>
+    <text x="625" y="1180" text-anchor="middle" class="node-title">Tool System</text>
+    <text x="625" y="1210" text-anchor="middle" class="node-text">文件 / Shell / Web / Push</text>
+    <text x="625" y="1237" text-anchor="middle" class="node-text">Schedule / Task / Memory Tools</text>
+    <text x="625" y="1270" text-anchor="middle" class="small">Schema 注册、权限边界、Hook</text>
+
+    <rect x="830" y="1140" width="320" height="155" rx="6" fill="#f7eff9" stroke="#af7ac5" stroke-width="2"/>
+    <text x="990" y="1180" text-anchor="middle" class="node-title">MCP Runtime</text>
+    <text x="990" y="1210" text-anchor="middle" class="node-text">McpClientPool · 动态增删 Server</text>
+    <text x="990" y="1237" text-anchor="middle" class="node-text">外部 API 统一转换为工具</text>
+    <text x="990" y="1270" text-anchor="middle" class="small">stdio / 远程 MCP 能力接入</text>
+
+    <rect x="1195" y="1140" width="320" height="155" rx="6" fill="#edf9f3" stroke="#52be80" stroke-width="2"/>
+    <text x="1355" y="1180" text-anchor="middle" class="node-title">Memory Runtime</text>
+    <text x="1355" y="1210" text-anchor="middle" class="node-text">召回 · 遗忘 · 合并 · 优化</text>
+    <text x="1355" y="1237" text-anchor="middle" class="node-text">Markdown Store / Memory Plugin</text>
+    <text x="1355" y="1270" text-anchor="middle" class="small">长期个人上下文（当前默认可关闭）</text>
+
+    <rect x="1560" y="1140" width="320" height="155" rx="6" fill="#f2f3f4" stroke="#85929e" stroke-width="2"/>
+    <text x="1720" y="1180" text-anchor="middle" class="node-title">State &amp; Event</text>
+    <text x="1720" y="1210" text-anchor="middle" class="node-text">SessionManager · EventBus</text>
+    <text x="1720" y="1237" text-anchor="middle" class="node-text">proactive.db · workflows.db · 事件轨迹</text>
+    <text x="1720" y="1270" text-anchor="middle" class="small">会话、事件、主动任务持久化</text>
+
+    <rect x="1925" y="1140" width="320" height="155" rx="6" fill="#f8f5ee" stroke="#9a7d4f" stroke-width="2"/>
+    <text x="2085" y="1180" text-anchor="middle" class="node-title">Dashboard API + UI</text>
+    <text x="2085" y="1210" text-anchor="middle" class="node-text">Sessions · Memory Explorer</text>
+    <text x="2085" y="1237" text-anchor="middle" class="node-text">主动任务状态与诊断信息</text>
+    <text x="2085" y="1270" text-anchor="middle" class="small">管理面板，不是聊天前端</text>
+  </g>
+
+  <text x="100" y="1355" class="lane-title">4. 小满个人助手扩展入口</text>
+  <rect x="100" y="1390" width="405" height="145" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text x="303" y="1428" text-anchor="middle" class="node-title">健康与训练插件</text>
+  <text x="303" y="1458" text-anchor="middle" class="node-text">小米手表 → Mi Fitness → Strava</text>
+  <text x="303" y="1485" text-anchor="middle" class="node-text">步数 / 心率 / 睡眠 / 训练记录</text>
+  <text x="303" y="1513" text-anchor="middle" class="small">通过 MCP / API / 数据导入接入</text>
+
+  <rect x="545" y="1390" width="405" height="145" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text x="748" y="1428" text-anchor="middle" class="node-title">日程与习惯插件</text>
+  <text x="748" y="1458" text-anchor="middle" class="node-text">Notion / Todo / Calendar</text>
+  <text x="748" y="1485" text-anchor="middle" class="node-text">喝水、站立、睡眠、每日事项提醒</text>
+  <text x="748" y="1513" text-anchor="middle" class="small">Scheduler + Task Runtime + Push</text>
+
+  <rect x="990" y="1390" width="405" height="145" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text x="1193" y="1428" text-anchor="middle" class="node-title">个人记忆与笔记插件</text>
+  <text x="1193" y="1458" text-anchor="middle" class="node-text">Notion / Markdown / 个人笔记</text>
+  <text x="1193" y="1485" text-anchor="middle" class="node-text">偏好、经历、目标、长期关系上下文</text>
+  <text x="1193" y="1513" text-anchor="middle" class="small">先摄取，再进入 Memory Runtime</text>
+
+  <rect x="1435" y="1390" width="405" height="145" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text x="1638" y="1428" text-anchor="middle" class="node-title">复盘与计划调整 Skill</text>
+  <text x="1638" y="1458" text-anchor="middle" class="node-text">训练主动性回顾 · 疲劳评估</text>
+  <text x="1638" y="1485" text-anchor="middle" class="node-text">按数据与主观感受调整计划</text>
+  <text x="1638" y="1513" text-anchor="middle" class="small">Skill 负责方法，Task Runtime 负责进度</text>
+
+  <rect x="1880" y="1390" width="365" height="145" rx="6" fill="#ffffff" stroke="#8e44ad" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text x="2063" y="1428" text-anchor="middle" class="node-title">情感陪伴与主动关怀</text>
+  <text x="2063" y="1458" text-anchor="middle" class="node-text">情绪 Check-in · 温和追问</text>
+  <text x="2063" y="1485" text-anchor="middle" class="node-text">结合个人记忆保持连续性</text>
+  <text x="2063" y="1513" text-anchor="middle" class="small">Proactive + Memory + 安全边界</text>
+
+  <path d="M303 1390 V1335 H990 V1307" class="arrow-dashed"/>
+  <path d="M748 1390 V1345 H625 V1307" class="arrow-dashed"/>
+  <path d="M1193 1390 V1330 H1355 V1307" class="arrow-dashed"/>
+  <path d="M1638 1390 V1338 H260 V1307" class="arrow-dashed"/>
+  <path d="M2063 1390 V1338 H1720 V1307" class="arrow-dashed"/>
+
+  <text x="1200" y="1672" text-anchor="middle" class="small">核心原则：Channel 负责收发，Agent 负责推理，Task Runtime 负责有状态流程，Subagent 只执行步骤，Skill 负责方法，Tool/MCP 负责执行，Memory 负责长期上下文。</text>
+</svg>

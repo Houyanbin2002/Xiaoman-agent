@@ -1,0 +1,82 @@
+.desktop-app {
+  height: 100vh;
+  min-height: 0;
+  display: block;
+  overflow: hidden;
+  background: var(--xm-bg);
+}
+.window-chrome { display: none; }
+.desktop-app .app-shell {
+  height: 100vh;
+  min-height: 0;
+  grid-template-columns: 232px minmax(0, 1fr);
+  background: var(--xm-bg);
+}
+.desktop-app .app-shell.sidebar-collapsed { grid-template-columns: 74px minmax(0, 1fr); }
+
+.desktop-app .product-sidebar { width: auto; height: 100%; padding: 0 17px 18px; border: 0; border-right: 1px solid var(--xm-line); background: rgba(250, 250, 253, 0.96); }
+.product-brand { min-height: 94px; display: flex; align-items: center; gap: 12px; padding: 18px 9px; }
+.product-brand > img { width: 40px; height: 40px; object-fit: cover; flex: 0 0 auto; border: 3px solid white; border-radius: 50%; box-shadow: 0 9px 22px rgba(41, 43, 62, 0.16); }
+.product-brand > div:nth-child(2) { min-width: 0; }
+.product-brand strong { display: block; color: #25262e; font-size: 18px; font-weight: 850; letter-spacing: -0.05em; }
+.product-brand span { display: block; margin-top: 1px; color: var(--xm-text-subtle); font-size: 11px; font-weight: 600; }
+.product-brand .brand-actions { display: none; margin-left: auto; }
+
+.product-new-chat { width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 9px; margin-bottom: 14px; border: 1px solid var(--xm-line-strong); border-radius: 12px; background: white; color: #50515d; font-size: 13px; font-weight: 750; cursor: pointer; }
+.product-new-chat:hover { border-color: #c7c3dd; background: #f8f7fc; }
+
+.desktop-app .product-nav { min-height: auto; flex: 0 0 auto; display: grid; gap: 5px; padding: 0; overflow: visible; }
+.product-nav > button, .product-settings { width: 100%; min-height: 45px; display: flex; align-items: center; gap: 11px; padding: 0 13px; border: 0; border-radius: 13px; background: transparent; color: #686975; font-size: 14px; font-weight: 650; text-align: left; cursor: pointer; }
+.product-nav > button:hover, .product-settings:hover { background: var(--xm-surface-muted); color: #40414b; }
+.product-nav > button.active, .product-settings.active { background: linear-gradient(105deg, #e9efff 0%, #f2eaff 100%); color: #3f42ad; font-weight: 800; box-shadow: inset 0 0 0 1px rgba(91, 77, 221, 0.07); }
+
+.product-conversation-slot { min-height: 0; flex: 1; overflow: hidden; margin: 14px -7px 8px; }
+.product-conversation-slot .conversation-rail { height: 100%; padding: 0 7px; }
+.product-conversation-slot .conversation-group-trigger { min-height: 38px; font-size: 12px; }
+.product-conversation-slot .conversation-open { min-height: 36px; font-size: 12px; }
+.product-sidebar-space { flex: 1; }
+.product-settings { flex: 0 0 auto; margin-top: 8px; }
+
+.product-runtime { min-height: 67px; display: flex; align-items: center; gap: 11px; margin-top: 10px; padding: 13px 8px 0; border-top: 1px solid var(--xm-line); }
+.product-runtime-avatar { width: 37px; height: 37px; position: relative; flex: 0 0 auto; }
+.product-runtime-avatar img { width: 100%; height: 100%; object-fit: cover; border: 2px solid white; border-radius: 50%; }
+.product-runtime-avatar i { width: 10px; height: 10px; position: absolute; right: -1px; bottom: 1px; border: 2px solid white; border-radius: 50%; background: #23b778; }
+.product-runtime strong { display: block; color: #4d4e58; font-size: 12px; font-weight: 750; }
+.product-runtime small { display: block; margin-top: 1px; color: var(--xm-text-subtle); font-size: 10px; }
+
+.desktop-app .main-shell {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: radial-gradient(circle at 78% -12%, rgba(98, 69, 235, 0.1), transparent 30%), var(--xm-bg);
+  box-shadow: none;
+}
+.workspace-atmosphere { display: none; }
+.desktop-app .app-topbar { height: 68px; padding: 0 clamp(24px, 3vw, 42px); border: 0; background: transparent; }
+.desktop-app .product-topbar-date { display: block; color: #747581; font-size: 13px; font-weight: 650; }
+.content-shell { padding: 24px clamp(24px, 3.2vw, 46px) 48px; background: transparent; }
+.content-shell.chat-content { padding: 0; }
+
+.desktop-app .app-shell.sidebar-collapsed .product-sidebar { padding-inline: 10px; }
+.app-shell.sidebar-collapsed .product-brand { justify-content: center; padding-inline: 0; }
+.app-shell.sidebar-collapsed .product-brand > div:nth-child(2),
+.app-shell.sidebar-collapsed .product-nav span,
+.app-shell.sidebar-collapsed .product-settings span,
+.app-shell.sidebar-collapsed .product-runtime > div,
+.app-shell.sidebar-collapsed .product-new-chat span { display: none; }
+.app-shell.sidebar-collapsed .product-nav > button,
+.app-shell.sidebar-collapsed .product-settings { justify-content: center; padding: 0; }
+.app-shell.sidebar-collapsed .product-conversation-slot { display: none; }
+.app-shell.sidebar-collapsed .product-runtime { justify-content: center; padding-inline: 0; }
+
+@media (max-width: 860px) {
+  .desktop-app .app-shell, .desktop-app .app-shell.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .desktop-app .product-sidebar { width: min(310px, 88vw); position: fixed; inset: 0 auto 0 0; z-index: 80; transform: translateX(-105%); box-shadow: 24px 0 65px rgba(31, 32, 42, 0.2); transition: transform 180ms ease; }
+  .desktop-app .product-sidebar.mobile-open { transform: translateX(0); }
+  .product-brand .brand-actions { display: block; }
+  .app-topbar { padding-inline: 18px; }
+  .content-shell { padding: 20px 18px 38px; }
+}

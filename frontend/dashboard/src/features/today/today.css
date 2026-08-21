@@ -1,0 +1,35 @@
+.desktop-app .day-workspace-tabs { max-width: 1120px; gap: 5px; margin: -10px auto 24px; padding: 5px; border: 1px solid var(--xm-line); border-radius: 15px; background: #eeeef4; }
+.desktop-app .day-workspace-tabs button { min-height: 62px; border-radius: 11px; color: #7d7d88; }
+.desktop-app .day-workspace-tabs button.active { border-color: #e0dfeb; background: white; color: #4f46ad; box-shadow: 0 8px 22px rgba(48,48,73,.08); }
+.desktop-app .day-workspace-tabs strong { color: inherit; font-size: 13px; font-weight: 800; }
+.desktop-app .day-workspace-tabs small { color: var(--xm-text-subtle); font-size: 10px; }
+
+.desktop-app .routine-bar { max-width: 1120px; min-height: 150px; margin: 0 auto; padding: 27px 30px; border: 0; border-radius: var(--xm-radius-panel); background: var(--xm-priority-gradient); color: white; box-shadow: var(--xm-shadow-priority); }
+.desktop-app .routine-copy { max-width: 470px; }
+.desktop-app .routine-date { color: rgba(255,255,255,.67); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.desktop-app .routine-copy strong { display: block; margin-top: 7px; color: white; font-size: 25px; font-weight: 850; letter-spacing: -.04em; }
+.desktop-app .routine-copy p { margin: 7px 0 0; color: rgba(255,255,255,.7); font-size: 11px; }
+.desktop-app .routine-actions { max-width: 520px; justify-content: flex-end; }
+.desktop-app .routine-actions .secondary-button, .desktop-app .routine-actions .icon-button { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.12); color: white; }
+.desktop-app .routine-actions .secondary-button:hover, .desktop-app .routine-actions .icon-button:hover { border-color: rgba(255,255,255,.32); background: rgba(255,255,255,.2); color: white; }
+.desktop-app .routine-actions .primary-button { background: white; color: #5744c5; box-shadow: 0 10px 26px rgba(31,24,103,.22); }
+
+.desktop-app .today-source-strip { max-width: 1120px; min-height: 70px; margin: 14px auto 0; padding: 13px 16px; border-color: var(--xm-line); border-radius: 16px; background: rgba(255,255,255,.88); }
+.desktop-app .today-source-list > span { border-radius: 11px; }
+.desktop-app .personal-metrics { max-width: 1120px; margin: 14px auto 0; overflow: hidden; border-color: var(--xm-line); border-radius: 16px; background: rgba(255,255,255,.9); }
+.desktop-app .personal-metrics > div { padding: 18px 20px; }
+.desktop-app .personal-metrics span, .desktop-app .personal-metrics small { color: var(--xm-text-muted); }
+.desktop-app .personal-metrics strong { color: #2c2d35; font-size: 23px; font-weight: 820; }
+.desktop-app .personal-toolbar { max-width: 1120px; margin: 14px auto; }
+.desktop-app .filter-tabs { padding: 4px; border: 1px solid var(--xm-line); border-radius: 13px; background: #eeeef3; }
+.desktop-app .filter-tabs button { min-height: 34px; border-radius: 9px; font-weight: 700; }
+.desktop-app .filter-tabs button.active { background: white; color: #5146b6; box-shadow: 0 5px 14px rgba(49,49,70,.08); }
+.desktop-app .personal-records { max-width: 1120px; margin: 0 auto; overflow: hidden; border-color: var(--xm-line); border-radius: 16px; background: rgba(255,255,255,.94); }
+.desktop-app .personal-record-row { min-height: 92px; padding: 16px 18px; }
+.desktop-app .personal-record-icon { width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(135deg,#e7f2ff,#eee8ff); color: #5147b8; }
+.desktop-app .personal-record-main strong { font-size: 13px; font-weight: 790; }
+
+@media (max-width: 720px) {
+  .desktop-app .routine-bar { align-items: flex-start; flex-direction: column; padding: 24px 20px; }
+  .desktop-app .routine-actions { justify-content: flex-start; }
+}

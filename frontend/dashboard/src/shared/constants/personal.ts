@@ -1,0 +1,18 @@
+export const personalTypeLabels: Record<string, string> = {
+  profile: "个人资料",
+  commitment: "待办事项",
+  calendar_event: "日程",
+  health_observation: "健康",
+  daily_plan: "计划",
+  check_in: "签到",
+  notification_policy: "提醒策略",
+  memory: "明确记住",
+  context_state: "场景状态",
+  relationship: "重要关系",
+  important_date: "重要日期",
+  financial_obligation: "账单续费",
+  trip: "旅行行程",
+  goal: "目标",
+  periodic_report: "周期回顾",
+  proactive_intent: "主动关注",
+};

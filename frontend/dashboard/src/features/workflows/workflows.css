@@ -1,0 +1,16 @@
+.desktop-app .workflow-list { width: 100%; max-width: 1060px; display: grid; gap: 13px; margin: 0 auto; }
+.desktop-app .workflow-row { min-height: 126px; display: grid; grid-template-columns: 48px minmax(0,1fr) auto; gap: 16px; padding: 20px; border: 1px solid var(--xm-line); border-radius: var(--xm-radius-card); background: rgba(255,255,255,.92); box-shadow: 0 11px 30px rgba(45,45,68,.045); }
+.desktop-app .workflow-row:hover { border-color: #d4d0e5; box-shadow: 0 16px 36px rgba(45,45,68,.08); }
+.desktop-app .workflow-symbol { width: 46px; height: 46px; border-radius: 14px; background: linear-gradient(135deg,#e8f1ff,#efe8ff); color: #5147b8; }
+.desktop-app .workflow-title strong { color: #30313a; font-size: 15px; font-weight: 810; }
+.desktop-app .workflow-body > p { margin: 6px 0 12px; color: var(--xm-text-muted); font-size: 12px; }
+.desktop-app .progress-line { height: 5px; border-radius: 999px; background: #ececf2; }
+.desktop-app .progress-line span { border-radius: inherit; background: var(--xm-priority-gradient); }
+.desktop-app .workflow-body > small { color: var(--xm-text-subtle); font-size: 10px; }
+.desktop-app .workflow-action-panel { margin-top: 15px; border-color: #e2def4; border-radius: 13px; background: #f8f6ff; }
+.desktop-app .workflow-action-panel strong { font-weight: 790; }
+
+@media (max-width: 620px) {
+  .desktop-app .workflow-row { grid-template-columns: 42px minmax(0,1fr); }
+  .desktop-app .workflow-row > .icon-button, .desktop-app .workflow-terminal-actions { grid-column: 2; justify-self: end; }
+}

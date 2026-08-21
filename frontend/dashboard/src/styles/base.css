@@ -1,0 +1,37 @@
+* { box-sizing: border-box; }
+
+html, body, #root { width: 100%; min-width: 0; height: 100%; margin: 0; }
+
+body {
+  color: var(--xm-text);
+  background: var(--xm-bg);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button, input, textarea, select { font: inherit; }
+button { min-height: 40px; }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid rgba(18, 104, 239, 0.24);
+  outline-offset: 2px;
+}
+
+::selection { color: #fff; background: var(--xm-brand-violet); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,27 @@
+.desktop-app .app-shell[data-view="chat"] .main-shell { background: radial-gradient(circle at 50% 48%, rgba(88, 112, 243, .09), transparent 25%), #fff; }
+.desktop-app .chat-welcome.minimal-welcome { justify-content: center; padding: 48px 24px 80px; transform: none; }
+.welcome-identity { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 12px; }
+.welcome-identity > span { width: 60px; height: 60px; position: relative; border-radius: 50%; background: white; box-shadow: 0 16px 38px rgba(38, 40, 70, .16); }
+.welcome-identity img { width: 100%; height: 100%; object-fit: cover; border: 3px solid white; border-radius: 50%; }
+.welcome-identity i { width: 12px; height: 12px; position: absolute; right: 2px; bottom: 3px; border: 3px solid white; border-radius: 50%; background: #23b778; }
+.welcome-identity small { color: #858591; font-size: 10px; font-weight: 750; }
+.desktop-app .chat-welcome h2 { margin: 0; color: #242630; font-size: 30px; font-weight: 830; letter-spacing: -.05em; }
+.desktop-app .chat-welcome > p { margin: 8px 0 20px; color: #868690; font-size: 12px; }
+.welcome-starters { width: min(720px, 90%); display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.welcome-starters button { min-height: 34px; padding: 0 13px; border: 1px solid #e0dfeb; border-radius: 999px; background: rgba(255,255,255,.88); color: #696875; font-size: 10px; font-weight: 700; cursor: pointer; }
+.welcome-starters button:hover { border-color: #c9c3ed; color: #5449b7; background: #f8f6ff; }
+.desktop-app .compact-entry { width: min(760px, 90%); }
+.desktop-app .compact-aura i:first-child { background: radial-gradient(circle, rgba(30, 124, 247, .18), transparent 68%); }
+.desktop-app .compact-aura i:nth-child(2) { background: radial-gradient(circle, rgba(112, 61, 224, .2), transparent 68%); }
+.desktop-app .compact-composer { border-color: #dedde7; border-radius: 24px; background: rgba(255,255,255,.96); box-shadow: 0 22px 55px rgba(43, 45, 74, .14); }
+.desktop-app .compact-composer:focus-within { border-color: #bdb8e0; box-shadow: 0 24px 58px rgba(67, 59, 145, .17); }
+.desktop-app .compact-composer textarea { font-size: 14px; }
+.desktop-app .composer-shell.conversation-mode { background: linear-gradient(180deg, rgba(255,255,255,0), #fff 28%); }
+.desktop-app .has-messages .chat-row.assistant .message-surface { color: #30313a; font-size: 14px; line-height: 1.78; }
+.desktop-app .has-messages .chat-row.user .message-surface { border-radius: 18px 18px 5px 18px; background: linear-gradient(135deg, #f0f1f6, #eceaf3); color: #33343e; }
+
+@media (max-width: 620px) {
+  .desktop-app .chat-welcome.minimal-welcome { justify-content: flex-start; padding-top: 42px; }
+  .desktop-app .chat-welcome h2 { font-size: 25px; }
+  .desktop-app .compact-entry, .welcome-starters { width: 100%; }
+}

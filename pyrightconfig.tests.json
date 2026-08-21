@@ -1,0 +1,40 @@
+{
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.12",
+  "venvPath": ".",
+  "venv": ".venv",
+  "include": [
+    "tests"
+  ],
+  "exclude": [
+    ".venv",
+    ".venv-test",
+    "eval"
+  ],
+  "reportMissingTypeArgument": "warning",
+  "reportPrivateUsage": "warning",
+  "reportUnknownParameterType": "warning",
+  "reportUnknownArgumentType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportUnknownLambdaType": "warning",
+  "reportUnusedCallResult": "warning",
+  "reportUnusedImport": "warning",
+  "reportDeprecated": "warning",
+  "reportArgumentType": "error",
+  "reportOptionalMemberAccess": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportAssignmentType": "error",
+  "reportOperatorIssue": "error",
+  "reportCallIssue": "error",
+  "reportGeneralTypeIssues": "error",
+  "reportMissingImports": "error",
+  "reportIndexIssue": "error",
+  "reportOptionalSubscript": "warning",
+  "reportOptionalCall": "warning",
+  "reportOptionalOperand": "warning",
+  "reportRedeclaration": "error",
+  "reportReturnType": "error",
+  "reportUndefinedVariable": "error",
+  "reportUnboundVariable": "error"
+}
