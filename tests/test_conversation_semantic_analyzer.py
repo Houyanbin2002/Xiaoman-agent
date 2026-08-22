@@ -123,6 +123,108 @@ async def test_analyzer_returns_empty_payload_for_non_object_json() -> None:
     assert result == result.empty()
 
 
+@pytest.mark.asyncio
+async def test_analyzer_preserves_explicit_directives_when_model_omits_them() -> None:
+    provider = _Provider({"memory_candidates": [], "attention_observations": []})
+    messages = [
+        {
+            "id": "web:explicit:style",
+            "role": "user",
+            "content": "我喜欢先给结论，再给简短步骤。",
+        },
+        {
+            "id": "web:explicit:channel",
+            "role": "user",
+            "content": "涉及工作任务时优先在当前对话里回复，不要发到外部群。",
+        },
+    ]
+
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(messages)
+
+    assert provider.call_count == 1
+    assert {item.attributes["preference_key"] for item in result.memory_candidates} == {
+        "response_style",
+        "communication_channel",
+    }
+    assert all(item.confidence == 0.98 for item in result.memory_candidates)
+    assert all(item.origin == "explicit_user" for item in result.memory_candidates)
+
+
+@pytest.mark.asyncio
+async def test_analyzer_extracts_explicit_correction_with_replacement_evidence() -> None:
+    provider = _Provider(
+        {
+            "memory_candidates": [
+                {
+                    "tag": "correction",
+                    "content": "以后代码示例改为 Python",
+                    "confidence": 0.99,
+                    "origin": "user_correction",
+                    "source_message_id": "web:explicit:correction",
+                    "evidence_refs": ["web:explicit:correction"],
+                    "subject": "用户",
+                    "predicate": "代码示例语言",
+                    "value": "Python",
+                    "replaces": "JavaScript",
+                    "attributes": {"preference_key": "code_language"},
+                }
+            ]
+        }
+    )
+    messages = [
+        {
+            "id": "web:explicit:correction",
+            "role": "user",
+            "content": "之前记的 JavaScript 偏好作废，以后改为 Python。",
+        }
+    ]
+
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(messages)
+
+    assert len(result.memory_candidates) == 1
+    candidate = result.memory_candidates[0]
+    assert candidate.tag == "correction"
+    assert candidate.value == "Python"
+    assert candidate.replaces == "JavaScript"
+    assert candidate.source_message_id == "web:explicit:correction"
+
+
+@pytest.mark.asyncio
+async def test_explicit_fallback_replaces_same_slot_model_candidate() -> None:
+    provider = _Provider(
+        {
+            "memory_candidates": [
+                {
+                    "tag": "correction",
+                    "content": "用户只允许内部沟通",
+                    "confidence": 0.98,
+                    "origin": "user_correction",
+                    "source_message_id": "web:channel:0",
+                    "evidence_refs": ["web:channel:0"],
+                    "subject": "用户",
+                    "predicate": "沟通渠道",
+                    "value": "work_content_internal_only",
+                    "replaces": "external_group_allowed",
+                    "attributes": {"preference_key": "communication_channel"},
+                }
+            ]
+        }
+    )
+    messages = [
+        {
+            "id": "web:channel:0",
+            "role": "user",
+            "content": "之前允许发群里的规则取消，工作内容只在当前会话处理。",
+        }
+    ]
+
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(messages)
+
+    assert len(result.memory_candidates) == 1
+    assert result.memory_candidates[0].value == "当前会话"
+    assert result.memory_candidates[0].replaces == "群里"
+
+
 def test_semantic_prompt_uses_generic_memory_and_execution_boundaries() -> None:
     prompt = build_semantic_batch_prompt(MESSAGES)
 

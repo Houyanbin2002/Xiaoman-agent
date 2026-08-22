@@ -107,6 +107,30 @@ async def test_single_turn_only_arms_idle_timer_without_model_call(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_explicit_preference_flushes_without_waiting_for_idle_timer(tmp_path) -> None:
+    source = _MessageSource()
+    analyzer = _Analyzer()
+    bus = _EventBus()
+    batcher = ConversationSemanticBatcher(
+        message_source=source,
+        store=ConversationSemanticStore(tmp_path / "sessions.db"),
+        analyzer=analyzer,
+        event_bus=bus,
+        idle_seconds=3600,
+        max_turns=8,
+        keep_messages=20,
+    )
+    source.append_turn("web:explicit", "我喜欢先给结论，再给简短步骤。")
+
+    await batcher.on_turn_committed(_turn("web:explicit", "我喜欢先给结论，再给简短步骤。"))
+    await batcher.drain()
+
+    assert analyzer.call_count == 1
+    assert len(bus.published) == 1
+    await batcher.aclose()
+
+
+@pytest.mark.asyncio
 async def test_threshold_flush_publishes_one_durable_batch(tmp_path) -> None:
     source = _MessageSource()
     analyzer = _Analyzer()

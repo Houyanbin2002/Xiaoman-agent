@@ -291,11 +291,21 @@ class CompositeMemoryEngine:
                     "procedure 会进入独立的 Agent 执行经验库。"
                 ),
             )
+        forget = structured.forget
+        if forget is not None:
+            forget = replace(
+                forget,
+                description=(
+                    "仅用于用户明确要求忘记、删除或清除一条记忆的隐私删除。"
+                    "用户说旧偏好作废并给出新偏好属于纠错，禁止调用本工具；"
+                    "该情况由回合后的后台语义批次和冲突治理自动建立新旧版本血缘。"
+                ),
+            )
         tools = _dedupe_tools((*structured.tools, *episodic.tools))
         return MemoryToolProfile(
             recall=recall,
             memorize=memorize,
-            forget=structured.forget,
+            forget=forget,
             tools=tools,
         )
 

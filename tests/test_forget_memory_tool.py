@@ -90,3 +90,30 @@ async def test_forget_memory_ignores_duplicates_and_reports_missing(tmp_path: Pa
         assert payload["missing_ids"] == ["missing"]
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_forget_memory_defers_preference_correction_to_governance(
+    tmp_path: Path,
+):
+    store = MemoryStore2(tmp_path / "memory2.db")
+    try:
+        result = store.upsert_item(
+            memory_type="preference",
+            summary="代码示例使用 JavaScript",
+            embedding=[0.1, 0.2],
+            source_ref="tg:1:3",
+        )
+        item_id = result.split(":", 1)[1]
+        tool = _forget_tool(_MemoryWriter(store))
+
+        raw = await tool.execute(
+            ids=[item_id],
+            current_user_message="之前的 JavaScript 偏好作废，以后改为 Python。",
+        )
+        payload = json.loads(raw)
+
+        assert payload["status"] == "deferred_to_background_governance"
+        assert store.get_items_by_ids([item_id])[0]["status"] == "active"
+    finally:
+        store.close()

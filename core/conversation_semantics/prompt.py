@@ -24,10 +24,12 @@ SEMANTIC_SYSTEM_PROMPT = """你是小满个人助手的后台语义分析器。�
 - 假设、举例、问题、Agent 建议或复述不能成为长期事实。
 - 密码、Cookie、Token、API Key、验证码和账户凭据一律不得保存。
 - 同一语义只进入一个领域；宁可不提取，不要重复或编造。
+- 用户明确说“以后/默认/我喜欢/不要/改为”等规定时，origin=explicit_user，confidence 应为 0.95~1.0；用户明确纠正旧信息时 origin=user_correction，confidence 应为 0.98~1.0。这里只产出候选，最终权威性仍由治理器依据原始用户消息确认。
 
 1. recent_activity_entries：让个人助手了解用户近期在忙什么。只保留近期正在推进的项目、重要进展、明显困扰、截止事项或生活状态，不保存普通寒暄和一次性问答。字段：summary、importance(0-10)、occurred_at、source_message_ids。
 
 2. memory_candidates：稳定的用户长期个人上下文。字段：tag、content、confidence、origin、source_message_id、evidence_refs，可选 subject、predicate、value、scope、attributes、replaces、valid_from、expires_at。tag 只能是 identity、preference、relationship、long_term_health、project_context、correction。correction 必须明确指出 replaces；普通近期任务不属于长期记忆。
+- preference/correction 必须尽量输出 subject="用户"、predicate、value，并在 attributes.preference_key 给出稳定槽位名。常用槽位统一使用 code_language、timezone、response_style、response_length、document_format、notification_quiet_hours、communication_channel、active_project；其他偏好使用简短、稳定的英文 snake_case 槽位名。同一偏好的同义表达必须使用同一个 preference_key。
 
 3. task_events：尚未由工具成功创建的待办、截止事项及其明确状态变化。字段：summary、operation、delivery_semantics、confidence、origin、source_message_id、evidence_refs，可选 due_at、active_from、expires_at、related_summary、related_event_id。operation 只能是 upsert、complete、cancel。exact 必须有用户明确给出的准确时间；before_deadline 必须有截止时间；complete/cancel 必须引用用户明确表达的状态变化。
 

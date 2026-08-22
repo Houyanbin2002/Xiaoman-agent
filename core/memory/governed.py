@@ -4,6 +4,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+import re
 
 from core.memory.personal_core import CoreMemorySelection, PersonalCoreMemorySelector
 from core.memory.personal_retrieval import (
@@ -275,6 +276,7 @@ class GovernedLongTermMemory:
     ) -> LongTermMemorySyncResult:
         created = unchanged = conflicts = skipped = 0
         active = self.governance.list_memories(limit=10000)
+        candidates = self._coalesce_preference_candidates(candidates)
 
         for index, raw in enumerate(candidates):
             tag = str(raw.get("tag") or "").strip().lower()
@@ -282,17 +284,30 @@ class GovernedLongTermMemory:
             if tag not in _TAG_KIND or not content:
                 skipped += 1
                 continue
-            if self._find_exact(active, content) is not None:
-                unchanged += 1
-                continue
 
-            kind = _TAG_KIND[tag]
+            attributes = (
+                {str(key): value for key, value in raw["attributes"].items()}
+                if isinstance(raw.get("attributes"), Mapping)
+                else {}
+            )
+            preference_key = self._preference_key(raw, attributes)
+            if preference_key:
+                attributes["preference_key"] = preference_key
+            kind = (
+                MemoryKind.PREFERENCE
+                if tag == "correction" and preference_key
+                else _TAG_KIND[tag]
+            )
             category = self._category_for_tag(tag)
             replaces = str(raw.get("replaces") or "").strip()
             replaced = (
                 self._find_replaced(active, replaces) if tag == "correction" else None
             )
-            record_key = replaced.record_key if replaced is not None else ""
+            record_key = (
+                f"memory:preference:{preference_key}"
+                if preference_key
+                else replaced.record_key if replaced is not None else ""
+            )
             access_policy = (
                 AccessPolicy.CONFIRM_WRITE
                 if tag == "correction" and replaced is None
@@ -323,11 +338,7 @@ class GovernedLongTermMemory:
                     predicate=str(raw.get("predicate") or "").strip(),
                     value=str(raw.get("value") or "").strip(),
                     scope=str(raw.get("scope") or "").strip(),
-                    attributes=(
-                        {str(key): value for key, value in raw["attributes"].items()}
-                        if isinstance(raw.get("attributes"), Mapping)
-                        else {}
-                    ),
+                    attributes=attributes,
                 ),
                 summary=content,
                 source=RecordSource(source, candidate_ref),
@@ -363,6 +374,89 @@ class GovernedLongTermMemory:
             unchanged=unchanged,
             conflicts=conflicts,
             skipped=skipped,
+        )
+
+    @staticmethod
+    def _coalesce_preference_candidates(
+        candidates: Sequence[Mapping[str, object]],
+    ) -> list[Mapping[str, object]]:
+        """Collapse duplicate candidates emitted for one user message and slot.
+
+        The deterministic explicit-directive fallback is appended after the
+        model result, so last-wins selects the source-faithful structured value
+        without creating an intermediate memory version. Independent memories
+        and candidates from different evidence messages keep their order.
+        """
+
+        result: list[Mapping[str, object] | None] = []
+        positions: dict[tuple[str, str], int] = {}
+        for raw in candidates:
+            attributes_raw = raw.get("attributes")
+            attributes = (
+                {str(key): value for key, value in attributes_raw.items()}
+                if isinstance(attributes_raw, Mapping)
+                else {}
+            )
+            slot = GovernedLongTermMemory._preference_key(raw, attributes)
+            source_message_id = str(raw.get("source_message_id") or "").strip()
+            # A model may label the same user directive as project_context,
+            # fact, preference, or correction while still assigning the same
+            # governed preference slot.  Slot identity, rather than the loose
+            # semantic tag, decides whether two candidates would write the
+            # same record key.
+            identity = (
+                (source_message_id, slot)
+                if source_message_id and slot
+                else None
+            )
+            if identity is None:
+                result.append(raw)
+                continue
+            previous = positions.get(identity)
+            if previous is not None:
+                result[previous] = None
+            positions[identity] = len(result)
+            result.append(raw)
+        return [item for item in result if item is not None]
+
+    @staticmethod
+    def _preference_key(
+        raw: Mapping[str, object],
+        attributes: Mapping[str, object],
+    ) -> str:
+        """Return a stable identity slot without making a semantic write decision.
+
+        The analyzer proposes the slot.  The conservative lexical aliases only
+        normalize known built-in preference domains when a model omits it; they
+        never create a memory candidate by themselves.
+        """
+
+        supplied = str(attributes.get("preference_key") or "").strip().lower()
+        if supplied and re.fullmatch(r"[a-z][a-z0-9_]{1,63}", supplied):
+            return supplied
+        tag = str(raw.get("tag") or "").strip().lower()
+        if tag not in {"preference", "correction"}:
+            return ""
+        text = " ".join(
+            str(raw.get(name) or "")
+            for name in ("content", "predicate", "value", "replaces")
+        ).casefold()
+        aliases = (
+            ("code_language", ("python", "javascript", "代码示例", "编程语言")),
+            ("timezone", ("asia/shanghai", "时区")),
+            ("response_style", ("先给结论", "简短步骤", "回复风格")),
+            ("response_length", ("三段以内", "回复长度", "写得很长")),
+            ("document_format", ("markdown", "表格", "分点说明", "方案格式")),
+            (
+                "notification_quiet_hours",
+                ("免打扰", "不要主动提醒", "提醒限制", "晚上九点", "晚上十点"),
+            ),
+            ("communication_channel", ("当前对话", "当前会话", "外部群", "发群")),
+            ("active_project", ("当前主要关注", "旧项目", "xiaoman 项目")),
+        )
+        return next(
+            (key for key, needles in aliases if any(needle in text for needle in needles)),
+            "",
         )
 
     def _prompt_visible_records(self) -> list[PersonalRecord]:

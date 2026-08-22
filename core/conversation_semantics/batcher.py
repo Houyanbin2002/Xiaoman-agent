@@ -18,7 +18,12 @@ from core.conversation_semantics.store import (
 logger = logging.getLogger(__name__)
 
 _HIGH_VALUE_USER_SIGNAL_RE = re.compile(
-    r"(以后|今后|每次|一直|记住|别再|不要打扰|免打扰|提醒我|纠正|不是.+而是)",
+    # Explicit directives should be consolidated promptly.  The previous
+    # trigger only covered "以后/记住" wording, so equally authoritative
+    # forms such as "我喜欢…", "默认…", and corrections could wait for the
+    # idle timer and appear to be missed by the caller.
+    r"(以后|今后|每次|一直|记住|我喜欢|我的默认|默认|优先|不要再|别再|不要打扰|"
+    r"免打扰|提醒我|纠正|作废|取消|改为|改成|已经结束|当前主要关注|不是.+而是)",
     re.IGNORECASE,
 )
 

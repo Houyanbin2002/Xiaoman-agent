@@ -58,6 +58,7 @@ plugins/**/.data/
 .idea/
 .vscode/
 /evals/
+/eval/reports/
 /tests/regression/
 /config.backup.20260301-063714.json
 /docs/

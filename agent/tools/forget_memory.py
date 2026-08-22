@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from agent.tools.base import Tool
@@ -29,7 +30,31 @@ class ForgetMemoryTool(Tool):
         self.description = self._spec.description
         self.parameters = self._spec.parameters
 
-    async def execute(self, ids: list[str], **_: Any) -> str:
+    async def execute(self, ids: list[str], **context: Any) -> str:
+        request = str(context.get("current_user_message") or "").strip()
+        correction = re.search(
+            r"(改为|改成|更正|纠正|不要再|不再默认|以后.+(?:用|按)|"
+            r"作废.+(?:改为|改成)|已经结束.+当前主要关注|规则取消.+只在)",
+            request,
+            re.IGNORECASE,
+        )
+        explicit_erasure = re.search(
+            r"(忘记|删除|清除|彻底移除|隐私删除)",
+            request,
+            re.IGNORECASE,
+        )
+        if correction and not explicit_erasure:
+            return json.dumps(
+                {
+                    "accepted": False,
+                    "status": "deferred_to_background_governance",
+                    "message": (
+                        "这是记忆纠错而不是隐私删除；旧值与新值将由回合后的"
+                        "后台冲突治理建立版本血缘。"
+                    ),
+                },
+                ensure_ascii=False,
+            )
         clean_ids = _clean_ids(ids)
         if not clean_ids:
             return _render_forget_result(clean_ids, [], [], [])
