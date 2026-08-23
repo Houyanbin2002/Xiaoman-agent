@@ -164,6 +164,30 @@ def test_plugin_skill_linker_removes_stale_link(tmp_path: Path) -> None:
     assert not _materialized_skill_path(workspace / "skills", "foo:bar").exists()
 
 
+def test_plugin_skill_linker_removes_stale_managed_copy_after_root_change(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    stale_copy = _materialized_skill_path(workspace / "skills", "foo:bar")
+    stale_copy.mkdir(parents=True)
+    (stale_copy / "SKILL.md").write_text("stale managed copy", encoding="utf-8")
+    write_managed_skill_copy_marker(
+        stale_copy,
+        logical_name="foo:bar",
+        target=tmp_path / "removed-plugin-root" / "foo" / "skills" / "bar",
+        fingerprint="stale-fingerprint",
+    )
+
+    result = PluginSkillLinker(
+        workspace=workspace,
+        plugin_roots=[tmp_path / "current-plugin-root"],
+        memory_engine=None,
+    ).sync([])
+
+    assert result.removed == 1
+    assert not stale_copy.exists()
+
+
 def test_plugin_skill_linker_removes_broken_plugin_link(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     plugin_root = tmp_path / "plugins"

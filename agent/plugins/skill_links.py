@@ -331,9 +331,15 @@ class PluginSkillLinker:
         path: Path,
         managed_subpath: Sequence[str],
     ) -> bool:
-        target = (
-            _readlink_target(path) if path.is_symlink() else _managed_copy_target(path)
-        )
+        if not path.is_symlink():
+            # A managed-copy marker is written only after the copy succeeds and
+            # is the ownership boundary used by the rest of the skill loader.
+            # Do not require its recorded target to remain under a currently
+            # configured plugin root: roots can be removed, and Windows may
+            # normalize short and long path aliases differently between runs.
+            return read_managed_skill_copy_marker(path) is not None
+
+        target = _readlink_target(path)
         if target is None:
             return False
         return any(
