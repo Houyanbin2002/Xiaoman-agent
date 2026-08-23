@@ -12,6 +12,7 @@ from typing import cast
 
 import yaml
 from agent.plugins.manager import ActivePluginInfo
+from agent.plugins import skill_links
 from agent.plugins.skill_links import (
     PluginSkillLinker,
     remove_plugin_skill_materializations,
@@ -145,6 +146,39 @@ def test_plugin_skill_linker_materializes_workspace_skill(tmp_path: Path) -> Non
     assert is_plugin_skill_materialized(materialized, logical_name="foo:bar")
     loader = SkillsLoader(workspace, builtin_skills_dir=tmp_path / "builtin")
     assert loader.load_skill_body("foo:bar") == "plugin skill body"
+
+
+def test_plugin_skill_linker_uses_managed_copy_when_preferred(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plugin_root = tmp_path / "plugins"
+    plugin_dir = _write_plugin_skill(plugin_root, "foo", "bar")
+    monkeypatch.setattr(skill_links, "_prefer_managed_copy", lambda: True)
+
+    def fail_if_symlinked(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("preferred managed copies must not attempt a symlink")
+
+    monkeypatch.setattr(Path, "symlink_to", fail_if_symlinked)
+    linker = PluginSkillLinker(
+        workspace=workspace,
+        plugin_roots=[plugin_root],
+        memory_engine=None,
+    )
+
+    created = linker.sync([_plugin_info("foo", plugin_dir)])
+    materialized = _materialized_skill_path(workspace / "skills", "foo:bar")
+
+    assert created.created == 1
+    assert materialized.is_dir()
+    assert not materialized.is_symlink()
+    assert is_plugin_skill_materialized(materialized, logical_name="foo:bar")
+
+    removed = linker.sync([])
+
+    assert removed.removed == 1
+    assert not materialized.exists()
 
 
 def test_plugin_skill_linker_removes_stale_link(tmp_path: Path) -> None:

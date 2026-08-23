@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -235,6 +236,23 @@ class PluginSkillLinker:
         *,
         logical_name: str,
     ) -> bool:
+        if _prefer_managed_copy():
+            try:
+                self._create_managed_copy(
+                    link,
+                    target,
+                    logical_name=logical_name,
+                )
+            except (OSError, shutil.Error) as copy_error:
+                logger.warning(
+                    "插件 skill 受管副本创建失败 (%s -> %s): %s",
+                    link,
+                    target,
+                    copy_error,
+                )
+                return False
+            return True
+
         try:
             link.symlink_to(target, target_is_directory=True)
         except OSError as symlink_error:
@@ -476,6 +494,11 @@ def _readlink_target(link: Path) -> Path | None:
 
 def _same_path(left: Path, right: Path) -> bool:
     return left.resolve(strict=False) == right.resolve(strict=False)
+
+
+def _prefer_managed_copy() -> bool:
+    """Use ownership-marked copies where Windows link semantics are unstable."""
+    return os.name == "nt"
 
 
 def _remove_existing_path(path: Path) -> bool:
