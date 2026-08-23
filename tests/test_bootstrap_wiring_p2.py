@@ -255,6 +255,35 @@ def test_config_load_reads_prompt_cache_breakpoint_policy(tmp_path: Path):
     assert cfg.prompt_cache.recent_tool_result_chars == 12000
 
 
+def test_config_load_reads_execution_guard_policy(tmp_path: Path):
+    cfg_path = tmp_path / "config.toml"
+    _write_toml(
+        cfg_path,
+        {
+            "llm": {
+                "provider": "openai",
+                "main": {"model": "m", "api_key": "k"},
+            },
+            "agent": {
+                "system_prompt": "s",
+                "guard": {
+                    "max_tool_calls": 9,
+                    "tool_timeout_seconds": 33,
+                    "max_tool_result_chars": 6000,
+                    "workflow_max_concurrency": 2,
+                },
+            },
+        },
+    )
+
+    cfg = Config.load(cfg_path)
+
+    assert cfg.execution_guard.max_tool_calls == 9
+    assert cfg.execution_guard.tool_timeout_seconds == 33
+    assert cfg.execution_guard.max_tool_result_chars == 6000
+    assert cfg.execution_guard.workflow_max_concurrency == 2
+
+
 def test_config_load_reads_agent_dev_mode(tmp_path: Path):
     cfg_path = tmp_path / "config.toml"
     _write_toml(

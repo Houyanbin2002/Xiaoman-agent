@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, NotRequired, TypedDict, cast
@@ -24,6 +25,7 @@ from agent.runtime.langchain_adapters import (
     registry_tools_as_langchain,
 )
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.execution_guard import bound_tool_result
 from agent.tool_hooks import ToolExecutionRequest
 from agent.tool_runtime import (
     append_assistant_tool_calls,
@@ -31,8 +33,53 @@ from agent.tool_runtime import (
     tool_call_batch_snapshot,
 )
 from agent.tools.base import normalize_tool_result
+from core.llm import ToolArgumentsDecodeError
 
 logger = logging.getLogger(__name__)
+
+_MAX_MODEL_PROTOCOL_RETRIES = 2
+_MAX_INCOMPLETE_REPLY_RETRIES = 2
+_NORMAL_FINISH_REASONS = frozenset(
+    {"", "stop", "tool_calls", "function_call", "end_turn"}
+)
+_ACTION_WITHOUT_TOOL_RE = re.compile(
+    r"^\s*(?:我(?:先|来|会|将|准备|正在|看看|检查|查询|创建|执行|处理|读取|搜索|确认)|"
+    r"让我|接下来我)"
+)
+_INCOMPLETE_TAIL_RE = re.compile(
+    r"(?:[，、：:；;(（]|再把|然后|以及|并且|因为|所以|在于|如下|包括)\s*$"
+)
+
+
+def _tool_arguments_feedback(error: ToolArgumentsDecodeError) -> str:
+    preview = error.raw_arguments.replace("\x00", "")[:800]
+    return (
+        "【运行时协议反馈：工具参数无效】\n"
+        f"工具：{error.tool_name or '<unknown>'}\n"
+        f"固定原因：{error.reason}\n"
+        f"原参数预览：{preview}\n"
+        "该工具尚未执行。请严格按照工具 schema 重新生成一个完整且唯一的工具调用；"
+        "arguments 顶层必须是一个 JSON 对象，不要在对象后追加说明、代码块或第二个 JSON。"
+    )
+
+
+def _incomplete_reply_reason(content: str, metadata: dict[str, Any]) -> str:
+    """Return a deterministic reason when a no-tool response is likely incomplete."""
+
+    text = content.strip()
+    if not text:
+        return ""
+    finish_reason = str(metadata.get("finish_reason") or "").strip().lower()
+    if finish_reason not in _NORMAL_FINISH_REASONS:
+        return f"Provider 结束原因为 {finish_reason!r}，不是正常完成"
+    if text.count("```") % 2 == 1:
+        return "回复包含未闭合的代码块"
+    has_terminal_punctuation = text.endswith(("。", "！", "？", ".", "!", "?", "…"))
+    if _ACTION_WITHOUT_TOOL_RE.search(text) and not has_terminal_punctuation:
+        return "回复表示将继续检查或执行操作，但没有产生工具调用且句子未结束"
+    if len(text) <= 120 and _INCOMPLETE_TAIL_RE.search(text):
+        return "短回复停在连接词或未闭合标点处"
+    return ""
 
 
 class AgentGraphState(TypedDict):
@@ -45,6 +92,7 @@ class AgentGraphState(TypedDict):
     visible_names: list[str] | None
     visible_order: list[str] | None
     disabled_tools: list[str]
+    guard_state: dict[str, Any]
     iteration: int
     react_input_samples: list[int]
     cache_prompt_tokens: int
@@ -71,6 +119,9 @@ class AgentGraphState(TypedDict):
     early_stop_reply: str
     summary_used_fallback: bool
     request_time: NotRequired[str | None]
+    model_retry_pending: NotRequired[bool]
+    protocol_retry_count: NotRequired[int]
+    incomplete_reply_retry_count: NotRequired[int]
 
 
 def _tool_call_from_dict(raw: dict[str, Any]) -> LLMToolCall:
@@ -95,15 +146,6 @@ def _trace_to_dict(item: object) -> dict[str, Any]:
         "reason": getattr(item, "reason", ""),
         "extra_message": getattr(item, "extra_message", ""),
     }
-
-
-def _is_loop_guard_denial(exec_result: object) -> bool:
-    traces = getattr(exec_result, "pre_hook_trace", ()) or ()
-    return any(
-        getattr(item, "decision", "") == "deny"
-        and str(getattr(item, "reason", "")).startswith("tool_loop_guard:")
-        for item in traces
-    )
 
 
 def _message_text(message: AIMessage) -> str:
@@ -147,7 +189,12 @@ class LangGraphAgentExecutor:
             builder.add_conditional_edges(
                 "model",
                 self._route_after_model,
-                {"tool": "tool", "summarize": "summarize", "done": END},
+                {
+                    "model": "model",
+                    "tool": "tool",
+                    "summarize": "summarize",
+                    "done": END,
+                },
             )
             builder.add_conditional_edges(
                 "tool",
@@ -205,6 +252,7 @@ class LangGraphAgentExecutor:
             visible_names=visible_names,
             visible_order=visible_order,
             disabled_tools=sorted(disabled),
+            guard_state=self._host._execution_guard.initial_state(),
             iteration=0,
             react_input_samples=[],
             cache_prompt_tokens=0,
@@ -233,6 +281,9 @@ class LangGraphAgentExecutor:
             request_time=(
                 request_time.isoformat() if hasattr(request_time, "isoformat") else None
             ),
+            model_retry_pending=False,
+            protocol_retry_count=0,
+            incomplete_reply_retry_count=0,
         )
 
     async def run(
@@ -269,6 +320,14 @@ class LangGraphAgentExecutor:
             # default; an explicit new-thread action should use a new session id.
             if snapshot.next:
                 graph_input = None
+                await graph.aupdate_state(
+                    config,
+                    {
+                        "guard_state": self._host._execution_guard.resume_state(
+                            snapshot.values.get("guard_state")
+                        )
+                    },
+                )
                 persisted_run_id = str(snapshot.values.get("run_id") or "")
                 if on_content_delta is not None and persisted_run_id:
                     self._stream_callbacks[persisted_run_id] = on_content_delta
@@ -313,6 +372,7 @@ class LangGraphAgentExecutor:
                 cache_plan=dict(state.get("cache_plan") or {}),
                 tools_unlocked=list(state.get("tools_unlocked") or []),
                 exit_reason=state.get("exit_reason") or "completed",
+                execution_guard_state=dict(state.get("guard_state") or {}),
             )
         finally:
             for key in callback_keys:
@@ -354,6 +414,26 @@ class LangGraphAgentExecutor:
                 "early_stop_reply": step_ctx.early_stop_reply or "",
             }
 
+        guard = self._host._execution_guard.before_model(
+            state.get("guard_state"),
+            context_tokens=step_ctx.input_tokens_estimate,
+        )
+        if guard.stop_reason:
+            return {
+                "messages": messages,
+                "guard_state": guard.state,
+                "summary_reason": guard.stop_reason,
+            }
+        if guard.hint:
+            messages.append(
+                support.build_context_hint_message("execution_guard", guard.hint)
+            )
+            cache_view = self._host._prompt_cache.prepare_model_messages(
+                messages,
+                keep_recent_tool_rounds=self._host._execution_policy.recent_tool_rounds,
+            )
+            model_messages = cache_view.messages
+
         samples = [*state["react_input_samples"], step_ctx.input_tokens_estimate]
         visible_order_raw = state.get("visible_order")
         schema_names: list[str] | set[str] | None = (
@@ -392,9 +472,50 @@ class LangGraphAgentExecutor:
                 cache_view.plan.capped_recent_tool_messages,
                 cache_view.plan.stable_prefix_hash,
             )
-        response = cast(
-            AIMessage, await model.ainvoke(convert_to_messages(model_messages))
-        )
+        try:
+            response = cast(
+                AIMessage,
+                await asyncio.wait_for(
+                    model.ainvoke(convert_to_messages(model_messages)),
+                    timeout=self._host._execution_guard.config.model_call_timeout_seconds,
+                ),
+            )
+        except ToolArgumentsDecodeError as exc:
+            retry_count = int(state.get("protocol_retry_count") or 0) + 1
+            logger.warning(
+                "[ReAct协议修复] 工具参数解析失败 tool=%s retry=%d reason=%s",
+                exc.tool_name,
+                retry_count,
+                exc.reason,
+            )
+            if retry_count > _MAX_MODEL_PROTOCOL_RETRIES:
+                return {
+                    "messages": messages,
+                    "iteration": iteration + 1,
+                    "react_input_samples": samples,
+                    "guard_state": guard.state,
+                    "reply": "模型连续生成了无法解析的工具参数，本轮已安全停止，工具没有执行。",
+                    "thinking": None,
+                    "exit_reason": "tool_arguments_invalid",
+                    "model_retry_pending": False,
+                    "protocol_retry_count": retry_count,
+                }
+            messages.append({"role": "user", "content": _tool_arguments_feedback(exc)})
+            return {
+                "messages": messages,
+                "iteration": iteration + 1,
+                "react_input_samples": samples,
+                "guard_state": guard.state,
+                "cache_plan": cache_view.plan.to_metadata(),
+                "pending_tool_calls": [],
+                "pending_tool_index": 0,
+                "pending_tool_results": [],
+                "model_retry_pending": True,
+                "protocol_retry_count": retry_count,
+            }
+        except TimeoutError:
+            logger.warning("[执行保护] 模型调用超时，交由现有调用方错误边界处理")
+            raise
         content = _message_text(response)
         thinking_raw = response.response_metadata.get("thinking")
         thinking = str(thinking_raw) if thinking_raw is not None else None
@@ -410,6 +531,8 @@ class LangGraphAgentExecutor:
             "cache_hit_tokens": state["cache_hit_tokens"] + int(hit_tokens or 0),
             "cache_seen": bool(state["cache_seen"] or prompt_tokens is not None),
             "cache_plan": cache_view.plan.to_metadata(),
+            "guard_state": guard.state,
+            "model_retry_pending": False,
         }
         if response.tool_calls:
             tool_calls = [
@@ -442,6 +565,40 @@ class LangGraphAgentExecutor:
             )
             return update
 
+        incomplete_reason = _incomplete_reply_reason(
+            content,
+            dict(response.response_metadata),
+        )
+        incomplete_retries = int(state.get("incomplete_reply_retry_count") or 0)
+        if incomplete_reason and incomplete_retries < _MAX_INCOMPLETE_REPLY_RETRIES:
+            output_tokens = response.response_metadata.get("output_tokens")
+            logger.warning(
+                "[ReAct完成性修复] retry=%d output_tokens=%s reason=%s",
+                incomplete_retries + 1,
+                output_tokens,
+                incomplete_reason,
+            )
+            messages.append({"role": "assistant", "content": content})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "【运行时协议反馈：上一回复疑似未完成】\n"
+                        f"固定原因：{incomplete_reason}。\n"
+                        "请回到当前用户目标继续执行：需要操作就立即调用合适工具；"
+                        "不需要工具就给出语义完整的最终答复。不要只描述接下来准备做什么。"
+                    ),
+                }
+            )
+            update.update(
+                messages=messages,
+                reply="",
+                thinking=thinking,
+                model_retry_pending=True,
+                incomplete_reply_retry_count=incomplete_retries + 1,
+            )
+            return update
+
         if not content and thinking:
             messages.append({"role": "assistant", "content": ""})
             messages.append(
@@ -464,12 +621,19 @@ class LangGraphAgentExecutor:
                 on_content_delta=callback,
                 cache_metadata=retry_cache_view.plan.to_metadata(),
             )
-            retry = cast(
-                AIMessage,
-                await retry_model.ainvoke(
-                    convert_to_messages(retry_cache_view.messages)
-                ),
-            )
+            try:
+                retry = cast(
+                    AIMessage,
+                    await asyncio.wait_for(
+                        retry_model.ainvoke(
+                            convert_to_messages(retry_cache_view.messages)
+                        ),
+                        timeout=self._host._execution_guard.config.model_call_timeout_seconds,
+                    ),
+                )
+            except TimeoutError:
+                logger.warning("[执行保护] 空回复重试超时")
+                raise
             retry_content = _message_text(retry)
             retry_prompt_tokens = retry.response_metadata.get("cache_prompt_tokens")
             update["cache_prompt_tokens"] += int(retry_prompt_tokens or 0)
@@ -515,6 +679,7 @@ class LangGraphAgentExecutor:
             reply=content or "（无响应）",
             thinking=thinking,
             exit_reason="completed",
+            model_retry_pending=False,
         )
         return update
 
@@ -537,6 +702,46 @@ class LangGraphAgentExecutor:
         )
         batch = tool_call_batch_snapshot(calls)
         iteration = state["iteration"]
+
+        if index == 0:
+            guard = self._host._execution_guard.before_tool_batch(
+                state.get("guard_state"),
+                calls,
+                risk_resolver=self._host._tools.get_risk,
+            )
+            if guard.stop_reason:
+                blocked_calls: list[dict[str, Any]] = []
+                for blocked in calls:
+                    result = (
+                        "工具调用已被执行保护器阻止："
+                        f"{guard.stop_reason}。请基于已有结果收尾。"
+                    )
+                    append_tool_result(
+                        messages,
+                        tool_call_id=blocked.id,
+                        content=result,
+                        tool_name=blocked.name,
+                    )
+                    blocked_calls.append(
+                        {
+                            "call_id": blocked.id,
+                            "name": blocked.name,
+                            "status": "blocked",
+                            "arguments": blocked.arguments,
+                            "result": result,
+                        }
+                    )
+                return {
+                    "messages": messages,
+                    "guard_state": guard.state,
+                    "pending_tool_results": blocked_calls,
+                    "pending_tool_index": len(calls),
+                    "tool_chain": [
+                        *state["tool_chain"],
+                        {"text": state["pending_content"], "calls": blocked_calls},
+                    ],
+                    "summary_reason": guard.stop_reason,
+                }
 
         unknown = not self._host._tools.has_tool(call.name)
         if unknown or call.name in disabled:
@@ -588,22 +793,6 @@ class LangGraphAgentExecutor:
             }
 
         if visible_names is not None and call.name not in visible_names:
-            exec_result = await self._host._tool_executor.preflight(
-                ToolExecutionRequest(
-                    call_id=call.id,
-                    tool_name=call.name,
-                    arguments=call.arguments,
-                    source=self._host._execution_policy.source,
-                    session_key=state["session_key"],
-                    channel=state["channel"],
-                    chat_id=state["chat_id"],
-                    request_text=state["request_text"],
-                    permission_mode=state["permission_mode"],
-                    enforce_permissions=False,
-                    tool_batch=batch,
-                    tool_batch_index=index,
-                )
-            )
             await self._host._observe_tool_call_started(
                 session_key=state["session_key"],
                 channel=state["channel"],
@@ -613,18 +802,13 @@ class LangGraphAgentExecutor:
                 tool_name=call.name,
                 arguments=call.arguments,
             )
-            if _is_loop_guard_denial(exec_result):
-                result = str(exec_result.output)
-                status = exec_result.status
-                final_arguments = exec_result.final_arguments
-            else:
-                result = (
-                    f"工具 '{call.name}' 当前未加载（schema 不可见）。"
-                    f'请先调用 tool_search(query="select:{call.name}") 加载，'
-                    "然后再调用该工具。不要放弃当前任务。"
-                )
-                status = "blocked"
-                final_arguments = call.arguments
+            result = (
+                f"工具 '{call.name}' 当前未加载（schema 不可见）。"
+                f'请先调用 tool_search(query="select:{call.name}") 加载，'
+                "然后再调用该工具。不要放弃当前任务。"
+            )
+            status = "blocked"
+            final_arguments = call.arguments
             append_tool_result(
                 messages, tool_call_id=call.id, content=result, tool_name=call.name
             )
@@ -647,32 +831,9 @@ class LangGraphAgentExecutor:
                     "status": status,
                     "arguments": call.arguments,
                     "final_arguments": final_arguments,
-                    "pre_hook_trace": [
-                        _trace_to_dict(item)
-                        for item in getattr(exec_result, "pre_hook_trace", ())
-                    ],
                     "result": result,
                 }
             )
-            if _is_loop_guard_denial(exec_result):
-                for skipped in calls[index + 1 :]:
-                    append_tool_result(
-                        messages,
-                        tool_call_id=skipped.id,
-                        content="工具调用已因重复循环检测跳过。",
-                        tool_name=skipped.name,
-                    )
-                chain = [
-                    *state["tool_chain"],
-                    {"text": state["pending_content"], "calls": iter_calls},
-                ]
-                return {
-                    "messages": messages,
-                    "pending_tool_results": iter_calls,
-                    "pending_tool_index": len(calls),
-                    "tool_chain": chain,
-                    "summary_reason": "tool_call_loop",
-                }
             return {
                 "messages": messages,
                 "pending_tool_results": iter_calls,
@@ -722,6 +883,9 @@ class LangGraphAgentExecutor:
                 permission_mode=state["permission_mode"],
                 tool_batch=batch,
                 tool_batch_index=index,
+                timeout_seconds=self._host._execution_guard.tool_timeout(
+                    self._host._tools.get_risk(call.name)
+                ),
             ),
             _execute_tool,
         )
@@ -740,6 +904,14 @@ class LangGraphAgentExecutor:
         )
         normalized = self._host._execution_policy.limit_tool_result(
             normalize_tool_result(exec_result.output)
+        )
+        round_chars = sum(len(str(item.get("result") or "")) for item in iter_calls)
+        normalized = bound_tool_result(
+            normalized,
+            self._host._execution_guard.result_limit(
+                state.get("guard_state"),
+                round_chars=round_chars,
+            ),
         )
         await self._host._observe_tool_call_completed(
             session_key=state["session_key"],
@@ -792,7 +964,7 @@ class LangGraphAgentExecutor:
                 "post_hook_trace": [
                     _trace_to_dict(item) for item in exec_result.post_hook_trace
                 ],
-                "result": normalized.preview(),
+                "result": normalized.text or normalized.preview(),
             }
         )
         update: dict[str, Any] = {
@@ -808,24 +980,6 @@ class LangGraphAgentExecutor:
             "pending_tool_results": iter_calls,
             "pending_tool_index": index + 1,
         }
-        if _is_loop_guard_denial(exec_result):
-            for skipped in calls[index + 1 :]:
-                append_tool_result(
-                    messages,
-                    tool_call_id=skipped.id,
-                    content="工具调用已因重复循环检测跳过。",
-                    tool_name=skipped.name,
-                )
-            chain = [
-                *state["tool_chain"],
-                {"text": state["pending_content"], "calls": iter_calls},
-            ]
-            update.update(
-                messages=messages,
-                pending_tool_index=len(calls),
-                tool_chain=chain,
-                summary_reason="tool_call_loop",
-            )
         return update
 
     async def _finish_tool_round(self, state: AgentGraphState) -> dict[str, Any]:
@@ -837,6 +991,14 @@ class LangGraphAgentExecutor:
             chain_group["reasoning_content"] = state["pending_thinking"]
         tool_chain = [*state["tool_chain"], chain_group]
         messages = list(state["messages"])
+        guard = self._host._execution_guard.after_tool_round(
+            state.get("guard_state"),
+            list(state["pending_tool_results"]),
+        )
+        if guard.hint:
+            messages.append(
+                support.build_context_hint_message("execution_guard", guard.hint)
+            )
         self._host._execution_policy.append_after_tool_round(
             messages,
             completed_iterations=state["iteration"],
@@ -872,8 +1034,14 @@ class LangGraphAgentExecutor:
             "pending_content": "",
             "pending_thinking": None,
             "pending_provider_fields": {},
+            "guard_state": guard.state,
+            "disabled_tools": sorted(
+                set(state["disabled_tools"]) | set(guard.disabled_tools)
+            ),
         }
-        if after_step.early_stop:
+        if guard.stop_reason:
+            update["summary_reason"] = guard.stop_reason
+        elif after_step.early_stop:
             update["summary_reason"] = after_step.early_stop_reason or "after_step"
         return update
 
@@ -905,6 +1073,8 @@ class LangGraphAgentExecutor:
             return "summarize"
         if state.get("exit_reason"):
             return "done"
+        if state.get("model_retry_pending"):
+            return "model"
         return "tool"
 
     @staticmethod

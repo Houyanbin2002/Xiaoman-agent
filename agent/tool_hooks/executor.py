@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -130,11 +131,30 @@ class ToolExecutor:
                 post_hook_trace=post_trace,
             )
 
+        error_text = ""
         try:
             # 这里才进入真实工具执行；hook 本身不直接替代工具实现。
-            output = await invoker(request.tool_name, final_arguments)
+            invocation = invoker(request.tool_name, final_arguments)
+            if request.timeout_seconds is not None:
+                output = await asyncio.wait_for(
+                    invocation,
+                    timeout=max(0.01, float(request.timeout_seconds)),
+                )
+            else:
+                output = await invocation
+        except TimeoutError:
+            error_text = f"工具执行超时（{request.timeout_seconds:g}s）"
         except Exception as exc:
             error_text = str(exc)
+
+        # ToolRegistry 为兼容旧工具会把异常转成字符串；在统一执行层重新
+        # 标记为 error，避免失败结果被错误计入成功轨迹。
+        if not error_text and isinstance(output, str) and output.lstrip().startswith(
+            "工具执行出错:"
+        ):
+            error_text = output.split(":", 1)[1].strip() or "未知工具错误"
+
+        if error_text:
             try:
                 # 工具自身报错后，允许 post_tool_error 做记录型处理。
                 await self._run_post_hooks(

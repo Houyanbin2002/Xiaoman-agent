@@ -7,6 +7,7 @@ from typing import Any
 from proactive_v2.config import ProactiveConfig
 from agent.runtime.context_compaction import ContextCompactionConfig
 from agent.runtime.prompt_cache import PromptCacheConfig
+from agent.runtime.execution_guard import ExecutionGuardConfig
 
 
 @dataclass
@@ -137,6 +138,9 @@ class Config:
         default_factory=ContextCompactionConfig
     )
     prompt_cache: PromptCacheConfig = field(default_factory=PromptCacheConfig)
+    execution_guard: ExecutionGuardConfig = field(
+        default_factory=ExecutionGuardConfig
+    )
     dev_mode: bool = False
     peer_agents: list[PeerAgentConfig] = field(default_factory=list)
     wiring: WiringConfig = field(default_factory=WiringConfig)
@@ -154,6 +158,7 @@ __all__ = [
     "Config",
     "ConversationSemanticsConfig",
     "ContextCompactionConfig",
+    "ExecutionGuardConfig",
     "FitbitIntegrationConfig",
     "LangfuseConfig",
     "MemoryConfig",

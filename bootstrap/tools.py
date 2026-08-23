@@ -349,6 +349,7 @@ def build_core_runtime(
             ),
             context_compaction=config.context_compaction,
             prompt_cache=config.prompt_cache,
+            execution_guard=config.execution_guard,
         ),
     )
     loop_ref["loop"] = loop

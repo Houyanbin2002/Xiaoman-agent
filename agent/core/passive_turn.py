@@ -26,6 +26,7 @@ from agent.runtime.execution_policy import (
     PASSIVE_EXECUTION_POLICY,
     ProgressSummary,
 )
+from agent.runtime.execution_guard import ExecutionGuard, ExecutionGuardConfig
 from agent.runtime.context_compaction import (
     ContextCompactionConfig,
     ContextSummaryState,
@@ -865,6 +866,7 @@ class AgentExecutionKernel(Reasoner):
         graph_runtime: LangGraphRuntime | None = None,
         prompt_cache_config: PromptCacheConfig | None = None,
         context_compaction_config: ContextCompactionConfig | None = None,
+        execution_guard_config: ExecutionGuardConfig | None = None,
     ) -> None:
         self._llm = llm
         self._llm_config = llm_config
@@ -886,6 +888,7 @@ class AgentExecutionKernel(Reasoner):
         self._context_compaction = (
             context_compaction_config or ContextCompactionConfig(enabled=False)
         ).normalized()
+        self._execution_guard = ExecutionGuard(execution_guard_config)
         self._graph_runtime = graph_runtime or LangGraphRuntime()
         self._graph_executor = LangGraphAgentExecutor(self, self._graph_runtime)
         self._prompt_render_plugin_modules: list[object] = []
@@ -1374,21 +1377,24 @@ class AgentExecutionKernel(Reasoner):
                 messages,
                 keep_recent_tool_rounds=self._execution_policy.recent_tool_rounds,
             )
-            response = await run_model_step(
-                self._llm.provider,
-                messages=cache_view.messages + [
-                    support.build_context_hint_message(
-                        "summary_request",
-                        summary_prompt,
-                    )
-                ],
-                tools=[],
-                model=self._llm_config.model,
-                max_tokens=min(_SUMMARY_MAX_TOKENS, self._llm_config.max_tokens),
-                source=self._execution_policy.source,
-                iteration=iteration + 1,
-                purpose="incomplete_summary",
-                cache_metadata=cache_view.plan.to_metadata(),
+            response = await asyncio.wait_for(
+                run_model_step(
+                    self._llm.provider,
+                    messages=cache_view.messages + [
+                        support.build_context_hint_message(
+                            "summary_request",
+                            summary_prompt,
+                        )
+                    ],
+                    tools=[],
+                    model=self._llm_config.model,
+                    max_tokens=min(_SUMMARY_MAX_TOKENS, self._llm_config.max_tokens),
+                    source=self._execution_policy.source,
+                    iteration=iteration + 1,
+                    purpose="incomplete_summary",
+                    cache_metadata=cache_view.plan.to_metadata(),
+                ),
+                timeout=self._execution_guard.config.model_call_timeout_seconds,
             )
             text = (response.content or "").strip()
             if text:
@@ -1422,6 +1428,7 @@ class AgentExecutionKernel(Reasoner):
         cache_plan: dict[str, Any] | None = None,
         tools_unlocked: list[str] | None = None,
         exit_reason: str = "completed",
+        execution_guard_state: dict[str, Any] | None = None,
     ) -> ReasonerResult:
         # 1. 先把 tool_chain 扁平化成 invocations。
         invocations: list[LLMToolCall] = []
@@ -1459,6 +1466,12 @@ class AgentExecutionKernel(Reasoner):
             )
         if cache_plan:
             react_stats["prompt_cache_plan"] = dict(cache_plan)
+        if execution_guard_state:
+            react_stats["execution_guard"] = {
+                key: value
+                for key, value in execution_guard_state.items()
+                if key != "recent_rounds"
+            }
         metadata = {
             "tools_used": list(tools_used),
             "tools_unlocked": list(tools_unlocked or []),

@@ -52,6 +52,15 @@ class WorkflowStorePort(Protocol):
 
     def start_workflow(self, workflow_id: str) -> WorkflowInstance: ...
 
+    def replan_workflow(
+        self,
+        workflow_id: str,
+        *,
+        remaining_steps: Sequence[StepSpec],
+        expected_revision: int,
+        reason: str,
+    ) -> WorkflowInstance: ...
+
     def cancel_workflow(
         self,
         workflow_id: str,

@@ -3,6 +3,7 @@ from core.llm.models import (
     ContextLengthError,
     LLMResponse,
     StreamDelta,
+    ToolArgumentsDecodeError,
     ToolCall,
 )
 from core.llm.ports import LLMProvider
@@ -13,5 +14,6 @@ __all__ = [
     "LLMProvider",
     "LLMResponse",
     "StreamDelta",
+    "ToolArgumentsDecodeError",
     "ToolCall",
 ]

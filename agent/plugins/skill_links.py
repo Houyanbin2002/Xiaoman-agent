@@ -269,7 +269,9 @@ class PluginSkillLinker:
         logical_name: str,
     ) -> None:
         fingerprint = _directory_fingerprint(target)
-        temporary = link.with_name(f".{link.name}.{uuid4().hex}.tmp")
+        # Do not repeat the potentially long encoded logical name here. On
+        # Windows that made nested files hit MAX_PATH during the copy fallback.
+        temporary = link.with_name(f".skill-{uuid4().hex[:12]}.tmp")
         try:
             _ = shutil.copytree(
                 target,

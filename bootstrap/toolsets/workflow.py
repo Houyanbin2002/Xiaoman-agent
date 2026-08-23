@@ -4,6 +4,7 @@ from agent.tools.registry import ToolRegistry
 from agent.tools.workflow import TaskCreateTool, TaskManageTool
 from agent.workflows.runtime import WorkflowRuntime
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.execution_guard import ExecutionGuardConfig
 from bootstrap.toolsets.protocol import (
     ToolsetDeps,
     ToolsetProvider,
@@ -21,6 +22,12 @@ class WorkflowToolsetProvider(ToolsetProvider):
             raise RuntimeError(
                 "WorkflowToolsetProvider requires push_tool and agent_loop_provider"
             )
+        config = getattr(deps, "config", None)
+        guard = (
+            config.execution_guard
+            if config is not None
+            else ExecutionGuardConfig()
+        ).normalized()
         runtime = WorkflowRuntime(
             store=WorkflowStore(deps.workspace / "langgraph-workflow-index.db"),
             graph_runtime=LangGraphRuntime(deps.workspace / "langgraph-workflows.db"),
@@ -29,6 +36,9 @@ class WorkflowToolsetProvider(ToolsetProvider):
             tool_registry=registry,
             subagent_executor=deps.task_executor,
             trace_recorder=getattr(deps, "trace_recorder", None),
+            max_concurrency=guard.workflow_max_concurrency,
+            step_timeout_seconds=guard.workflow_step_timeout_seconds,
+            max_subagent_steps=guard.workflow_max_subagent_steps,
         )
         registry.register(
             TaskCreateTool(runtime),

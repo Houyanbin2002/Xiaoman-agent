@@ -36,7 +36,7 @@ base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 system_prompt = "You are Xiaoman, a helpful AI assistant with access to tools. Always respond in the same language the user uses."
 max_tokens = 8192
 # 设为 0 表示不限制迭代轮数；长任务仍可用 /stop 中断。
-max_iterations = 40
+max_iterations = 16
 dev_mode = false
 
 [agent.context]
@@ -59,7 +59,32 @@ max_history_messages = 2000
 enabled = true
 keep_recent_tool_rounds = 3
 cold_tool_result_chars = 1800
-recent_tool_result_chars = 24000
+recent_tool_result_chars = 12000
+
+# AgentLoop 防失控：状态直接持久化进 LangGraph checkpoint。
+[agent.guard]
+enabled = true
+window_rounds = 6
+same_signature_warn = 2
+same_signature_stop = 3
+no_progress_rounds = 4
+max_tool_calls = 12
+soft_timeout_seconds = 90
+hard_timeout_seconds = 150
+model_call_timeout_seconds = 90
+tool_timeout_seconds = 45
+side_effect_tool_timeout_seconds = 30
+context_soft_tokens = 120000
+context_hard_tokens = 160000
+max_tool_result_chars = 12000
+max_tool_round_chars = 24000
+max_turn_tool_result_chars = 60000
+subagent_max_iterations = 10
+subagent_timeout_seconds = 90
+subagent_result_chars = 12000
+workflow_max_concurrency = 2
+workflow_step_timeout_seconds = 180
+workflow_max_subagent_steps = 4
 
 [agent.tools]
 search_enabled = true
@@ -199,7 +224,7 @@ channel = "telegram"
 chat_id = ""
 
 [proactive.agent]
-max_steps = 35
+max_steps = 12
 content_limit = 5
 web_fetch_max_chars = 8000
 context_prob = 0.03
@@ -208,7 +233,7 @@ delivery_cooldown_hours = 1
 [proactive.drift]
 # Drift：无可推送内容时 agent 自主做任务。建议先跑通 proactive 再开启。
 enabled = false
-max_steps = 20
+max_steps = 8
 min_interval_hours = 3
 
 # =============================================================================

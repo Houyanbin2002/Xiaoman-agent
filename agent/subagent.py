@@ -8,6 +8,8 @@ from agent.core.passive_turn import AgentExecutionKernel
 from agent.core.runtime_support import ToolDiscoveryState
 from agent.looping.ports import LLMConfig, LLMServices
 from agent.runtime.execution_policy import SUBAGENT_EXECUTION_POLICY
+from agent.runtime.execution_guard import ExecutionGuardConfig
+from agent.runtime.langgraph_runtime import LangGraphRuntime
 from agent.tool_hooks.base import ToolHook
 from agent.tools.base import Tool
 from agent.tools.registry import ToolRegistry
@@ -32,6 +34,8 @@ class SubAgent:
         system_prompt: str = "",
         max_iterations: int = 30,
         max_tokens: int = 8192,
+        execution_guard_config: ExecutionGuardConfig | None = None,
+        graph_runtime: LangGraphRuntime | None = None,
     ) -> None:
         self._system_prompt = system_prompt
         self.last_exit_reason = "idle"
@@ -56,12 +60,18 @@ class SubAgent:
             tool_search_enabled=False,
             memory_window=0,
             execution_policy=SUBAGENT_EXECUTION_POLICY,
+            execution_guard_config=(
+                execution_guard_config.for_subagent()
+                if execution_guard_config is not None
+                else None
+            ),
+            graph_runtime=graph_runtime,
         )
 
     def add_tool_hooks(self, hooks: list[ToolHook]) -> None:
         self._kernel.add_tool_hooks(hooks)
 
-    async def run(self, task: str) -> str:
+    async def run(self, task: str, *, execution_id: str | None = None) -> str:
         """Run one isolated task and return its final or bounded summary text."""
         self.last_exit_reason = "running"
         self.iterations_used = 0
@@ -74,9 +84,14 @@ class SubAgent:
         messages.append({"role": "user", "content": task})
 
         try:
+            thread_key = (
+                f"subagent:{execution_id}"
+                if execution_id
+                else f"subagent:{id(self)}:{self._run_seq}"
+            )
             result = await self._kernel.run(
                 messages,
-                tool_event_session_key=f"subagent:{id(self)}:{self._run_seq}",
+                tool_event_session_key=thread_key,
                 request_text=task,
                 permission_mode="full_access",
             )

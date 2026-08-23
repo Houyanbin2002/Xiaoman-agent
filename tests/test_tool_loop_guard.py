@@ -9,8 +9,6 @@ from agent.looping.core import AgentLoop
 from agent.looping.ports import AgentLoopConfig, AgentLoopDeps, LLMConfig, MemoryServices
 from core.llm import LLMResponse, ToolCall
 from agent.subagent import SubAgent
-from agent.tool_hooks.base import ToolHook
-from agent.tool_hooks.types import HookContext, HookOutcome
 from agent.tools.base import Tool
 from agent.tools.registry import ToolRegistry
 from core.net.http import (
@@ -97,61 +95,6 @@ def _shared_http_resources():
         asyncio.run(resources.aclose())
 
 
-class _ToolLoopGuardHook(ToolHook):
-    name = "test.tool_loop_guard"
-    event = "pre_tool_use"
-
-    def __init__(self) -> None:
-        self._states: dict[str, tuple[str, int]] = {}
-
-    def matches(self, ctx: HookContext) -> bool:
-        return ctx.event == "pre_tool_use"
-
-    async def run(self, ctx: HookContext) -> HookOutcome:
-        signature, active_index = self._event_signature(ctx)
-        if not signature or ctx.request.tool_batch_index != active_index:
-            return HookOutcome()
-        key = self._state_key(ctx)
-        last_signature, repeat_count = self._states.get(key, ("", 0))
-        if signature == last_signature:
-            repeat_count += 1
-        else:
-            repeat_count = 1
-        self._states[key] = (signature, repeat_count)
-        if repeat_count < 3:
-            return HookOutcome()
-        return HookOutcome(
-            decision="deny",
-            reason="tool_loop_guard:连续重复调用工具 3 次，已截断并进入收尾。",
-        )
-
-    def _state_key(self, ctx: HookContext) -> str:
-        request = ctx.request
-        if request.session_key:
-            return f"{request.source}:{request.session_key}"
-        return f"{request.source}:{request.channel}:{request.chat_id}"
-
-    def _event_signature(self, ctx: HookContext) -> tuple[str, int]:
-        request = ctx.request
-        excluded = {"process_output", "process_stop"}
-        if not request.tool_batch:
-            if request.tool_name in excluded:
-                return "", 0
-            return f"{request.tool_name}:{request.arguments}", 0
-        parts: list[str] = []
-        active_index = -1
-        for index, tool_call in enumerate(request.tool_batch):
-            tool_name = str(tool_call.get("name", ""))
-            if tool_name in excluded:
-                continue
-            if active_index < 0:
-                active_index = index
-            parts.append(f"{tool_name}:{tool_call.get('arguments', {})}")
-        if active_index < 0:
-            return "", 0
-        return "|".join(parts), active_index
-
-
 def _make_agent_loop_with_tools(
     tmp_path: Path,
     provider: _FakeProvider,
@@ -178,21 +121,11 @@ def _make_agent_loop_with_tools(
             )
         ),
     )
-    loop.add_tool_hooks(_tool_loop_guard_hooks())
     return loop
 
 
 def _make_agent_loop(tmp_path: Path, provider: _FakeProvider, tool: Tool) -> AgentLoop:
     return _make_agent_loop_with_tools(tmp_path, provider, [tool])
-
-
-def _tool_loop_guard_hooks() -> list[ToolHook]:
-    return [_ToolLoopGuardHook()]
-
-
-def _install_tool_loop_guard(subagent: SubAgent) -> SubAgent:
-    subagent.add_tool_hooks(_tool_loop_guard_hooks())
-    return subagent
 
 
 def test_agent_loop_breaks_on_repeated_same_signature_and_returns_summary(tmp_path):
@@ -340,8 +273,6 @@ def test_subagent_marks_tool_loop_and_summarizes():
     subagent = SubAgent(
         provider=cast(Any, provider), model="m", tools=[tool], max_iterations=10
     )
-    _install_tool_loop_guard(subagent)
-
     result = asyncio.run(subagent.run("do work"))
 
     assert subagent.last_exit_reason == "tool_loop"
@@ -384,8 +315,6 @@ def test_subagent_breaks_on_repeated_multi_tool_batch_with_closed_chain():
         tools=[tool_a, tool_b],
         max_iterations=10,
     )
-    _install_tool_loop_guard(subagent)
-
     result = asyncio.run(subagent.run("do work"))
 
     assert subagent.last_exit_reason == "tool_loop"
@@ -406,8 +335,6 @@ def test_subagent_no_false_positive_when_same_tool_but_different_args():
     subagent = SubAgent(
         provider=cast(Any, provider), model="m", tools=[tool], max_iterations=10
     )
-    _install_tool_loop_guard(subagent)
-
     result = asyncio.run(subagent.run("do work"))
 
     assert subagent.last_exit_reason == "completed"
@@ -428,8 +355,6 @@ def test_subagent_ignores_repeated_process_output_in_loop_guard():
     subagent = SubAgent(
         provider=cast(Any, provider), model="m", tools=[tool], max_iterations=10
     )
-    _install_tool_loop_guard(subagent)
-
     result = asyncio.run(subagent.run("看后台任务状态"))
 
     assert subagent.last_exit_reason == "completed"
@@ -450,8 +375,6 @@ def test_subagent_ignores_repeated_process_stop_in_loop_guard():
     subagent = SubAgent(
         provider=cast(Any, provider), model="m", tools=[tool], max_iterations=10
     )
-    _install_tool_loop_guard(subagent)
-
     result = asyncio.run(subagent.run("停止后台任务"))
 
     assert subagent.last_exit_reason == "completed"

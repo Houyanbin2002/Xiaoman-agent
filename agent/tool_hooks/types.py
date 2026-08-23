@@ -23,6 +23,7 @@ class ToolExecutionRequest:
     enforce_permissions: bool = True
     tool_batch: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     tool_batch_index: int = 0
+    timeout_seconds: float | None = None
 
 
 @dataclass

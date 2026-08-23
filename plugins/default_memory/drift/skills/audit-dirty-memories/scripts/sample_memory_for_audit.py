@@ -103,7 +103,10 @@ def main() -> None:
 
     drift_dir = Path(str(args.drift_dir)).expanduser().resolve()
     payload = _sample(drift_dir)
-    print(json.dumps(payload, ensure_ascii=False))
+    # Keep stdout portable on Windows CI runners whose console encoding may not
+    # represent Chinese memory summaries. The consumer parses JSON, so escaped
+    # Unicode preserves the original text without depending on the code page.
+    print(json.dumps(payload, ensure_ascii=True))
 
 
 if __name__ == "__main__":

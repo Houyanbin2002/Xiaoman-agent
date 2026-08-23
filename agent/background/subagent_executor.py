@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -10,15 +11,15 @@ from agent.background.subagent_profiles import (
     build_subagent_spec,
 )
 from agent.subagent import SubAgent
+from agent.runtime.execution_guard import ExecutionGuardConfig, bound_tool_result
+from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.tools.base import ToolResult
 from agent.tool_hooks.base import ToolHook
 from core.llm import LLMProvider
 from core.net.http import HttpRequester
 from prompts.background import build_subagent_prompt
 
 logger = logging.getLogger(__name__)
-
-_RESULT_MAX_CHARS = 100_000
-_MAX_ITERATIONS = 10
 
 
 class SubagentExecutor:
@@ -33,12 +34,19 @@ class SubagentExecutor:
         max_tokens: int,
         fetch_requester: HttpRequester,
         multimodal: bool = True,
+        execution_guard: ExecutionGuardConfig | None = None,
     ) -> None:
+        self._guard_config = (execution_guard or ExecutionGuardConfig()).normalized()
         self._workspace = workspace
+        self._graph_runtime = LangGraphRuntime(
+            workspace / "langgraph-subagent-checkpoints.db"
+        )
         self._runtime = SubagentRuntime(
             provider=provider,
             model=model,
             max_tokens=max_tokens,
+            execution_guard=self._guard_config,
+            graph_runtime=self._graph_runtime,
         )
         self._fetch_requester = fetch_requester
         self._multimodal = multimodal
@@ -71,7 +79,16 @@ class SubagentExecutor:
         )
         subagent = self._build_subagent(task_dir=task_dir, profile=profile)
         try:
-            result = await subagent.run(task)
+            result = await asyncio.wait_for(
+                subagent.run(task, execution_id=run_id),
+                timeout=self._guard_config.subagent_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            logger.warning("subagent step timed out run_id=%s", run_id)
+            raise RuntimeError(
+                "subagent execution timed out after "
+                f"{self._guard_config.subagent_timeout_seconds:g}s"
+            ) from exc
         except Exception:
             logger.exception("subagent step failed run_id=%s", run_id)
             raise
@@ -89,6 +106,9 @@ class SubagentExecutor:
         return (
             f"[子任务「{display_label}」结果]\n" f"退出原因: {exit_reason}\n\n{result}"
         )
+
+    async def aclose(self) -> None:
+        await self._graph_runtime.aclose()
 
     @staticmethod
     def _validated_run_id(execution_id: str | None) -> str:
@@ -121,17 +141,14 @@ class SubagentExecutor:
                 task_dir,
                 profile,
             ),
-            max_iterations=_MAX_ITERATIONS,
+            max_iterations=self._guard_config.subagent_max_iterations,
             profile=profile,
             multimodal=self._multimodal,
         )
         return spec.build(self._runtime)
 
-    @staticmethod
-    def _truncate_result(result: str) -> str:
-        if len(result) <= _RESULT_MAX_CHARS:
-            return result
-        original_len = len(result)
-        return (
-            result[:_RESULT_MAX_CHARS] + f"\n...[结果已截断，原始长度 {original_len}]"
-        )
+    def _truncate_result(self, result: str) -> str:
+        return bound_tool_result(
+            ToolResult(text=result),
+            self._guard_config.subagent_result_chars,
+        ).text

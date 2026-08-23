@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable
 
 from agent.tool_hooks import ToolExecutionRequest
+from agent.runtime.execution_guard import (
+    ExecutionGuard,
+    ExecutionGuardConfig,
+    bound_tool_result,
+)
+from agent.tools.base import ToolResult
 from core.common.diagnostic_log import diagnostic_line
 from proactive_v2.config import ProactiveConfig
 from proactive_v2.context import AgentTickContext
@@ -31,6 +38,21 @@ class ProactiveJudge:
         self._tool_deps = tool_deps
         self._tool_executor = tool_executor
         self._record_step_fn = record_step_fn
+        self._guard = ExecutionGuard(
+            ExecutionGuardConfig(
+                max_tool_calls=cfg.agent_tick_max_steps,
+                soft_timeout_seconds=45,
+                hard_timeout_seconds=90,
+                max_tool_result_chars=cfg.agent_tick_web_fetch_max_chars,
+                max_tool_round_chars=cfg.agent_tick_web_fetch_max_chars,
+                max_turn_tool_result_chars=max(
+                    cfg.agent_tick_web_fetch_max_chars * 4,
+                    24_000,
+                ),
+            )
+        )
+        self._guard_state = self._guard.initial_state()
+        self._guard_stopped = False
 
     async def evaluate(
         self,
@@ -40,6 +62,8 @@ class ProactiveJudge:
     ) -> None:
         if self._llm_fn is None:
             return
+        self._guard_state = self._guard.initial_state()
+        self._guard_stopped = False
 
         while ctx.steps_taken < self._cfg.agent_tick_max_steps:
             ok = await self._run_tool_step(messages, ctx, loop_tag="loop", tool_choice="auto")
@@ -47,6 +71,9 @@ class ProactiveJudge:
                 break
             if ctx.terminal_action is not None:
                 break
+
+        if self._guard_stopped:
+            return
 
         if ctx.terminal_action == "skip" and gw_result is not None and gw_result.content_meta:
             all_content_ids = {m["id"] for m in gw_result.content_meta}
@@ -80,6 +107,9 @@ class ProactiveJudge:
                     if not ok:
                         break
 
+        if self._guard_stopped:
+            return
+
         if ctx.terminal_action is None and ctx.interesting_item_ids and ctx.steps_taken < self._cfg.agent_tick_max_steps:
             ids_str = ", ".join(sorted(ctx.interesting_item_ids))
             reflection = (
@@ -112,7 +142,15 @@ class ProactiveJudge:
         llm_fn = self._llm_fn
         if llm_fn is None:
             return False
-        tool_call = await llm_fn(messages, active_schemas, tool_choice)
+        try:
+            tool_call = await asyncio.wait_for(
+                llm_fn(messages, active_schemas, tool_choice),
+                timeout=self._guard.config.model_call_timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning("[proactive_v2] %s: model call timed out", loop_tag)
+            self._guard_stopped = True
+            return False
         if tool_call is None:
             logger.warning(
                 "[proactive_v2] %s: llm_fn returned None at step %d, stopping",
@@ -147,6 +185,31 @@ class ProactiveJudge:
             arg_summary,
         )
         ctx.steps_taken += 1
+        call_id = str(tool_call.get("id") or f"call_{ctx.steps_taken}")
+        call_record = {
+            "call_id": call_id,
+            "name": tool_name,
+            "arguments": tool_args,
+        }
+        before = self._guard.before_tool_batch(
+            self._guard_state,
+            [call_record],
+            risk_resolver=lambda name: (
+                "external-side-effect" if name == "message_push" else "read-only"
+            ),
+        )
+        self._guard_state = before.state
+        if before.stop_reason:
+            result = f"主动执行已收敛：{before.stop_reason}"
+            self._append_tool_messages(
+                messages,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_call_id=call_id,
+                result=result,
+            )
+            self._guard_stopped = True
+            return False
         exec_result = await self._tool_executor.execute(
             ToolExecutionRequest(
                 call_id=str(tool_call.get("id") or f"call_{ctx.steps_taken}"),
@@ -154,6 +217,11 @@ class ProactiveJudge:
                 arguments=tool_args,
                 source="proactive",
                 session_key=self._session_key,
+                timeout_seconds=self._guard.tool_timeout(
+                    "external-side-effect"
+                    if tool_name == "message_push"
+                    else "read-only"
+                ),
             ),
             lambda name, args: dispatch(name, args, ctx, self._tool_deps),
         )
@@ -173,13 +241,15 @@ class ProactiveJudge:
                 )
             )
             logger.warning("[proactive_v2] %s: tool error: %s", loop_tag, exec_result.output)
-            result = str(exec_result.output)
-            call_id = tool_call.get("id") or f"call_{ctx.steps_taken}"
+            result = bound_tool_result(
+                ToolResult(text=str(exec_result.output)),
+                self._guard.config.max_tool_result_chars,
+            ).text
             self._record_step_fn(
                 ctx,
                 phase=f"{loop_tag}:error",
                 tool_name=tool_name,
-                tool_call_id=str(call_id),
+                tool_call_id=call_id,
                 tool_args=tool_args,
                 tool_result_text=result,
             )
@@ -190,8 +260,17 @@ class ProactiveJudge:
                 tool_call_id=call_id,
                 result=result,
             )
+            after = self._guard.after_tool_round(
+                self._guard_state,
+                [{**call_record, "status": exec_result.status, "result": result}],
+            )
+            self._guard_state = after.state
+            self._guard_stopped = bool(after.stop_reason)
             return False
-        result = str(exec_result.output)
+        result = bound_tool_result(
+            ToolResult(text=str(exec_result.output)),
+            self._guard.config.max_tool_result_chars,
+        ).text
         logger.info(
             diagnostic_line(
                 "ProactiveJudge._run_tool_step",
@@ -205,12 +284,11 @@ class ProactiveJudge:
                 counts=f"step:{ctx.steps_taken}",
             )
         )
-        call_id = tool_call.get("id") or f"call_{ctx.steps_taken}"
         self._record_step_fn(
             ctx,
             phase=loop_tag,
             tool_name=tool_name,
-            tool_call_id=str(call_id),
+            tool_call_id=call_id,
             tool_args=tool_args,
             tool_result_text=result,
         )
@@ -221,6 +299,18 @@ class ProactiveJudge:
             tool_call_id=call_id,
             result=result,
         )
+        after = self._guard.after_tool_round(
+            self._guard_state,
+            [{**call_record, "status": exec_result.status, "result": result}],
+        )
+        self._guard_state = after.state
+        if after.hint:
+            messages.append(
+                {"role": "system", "content": f"【执行保护】{after.hint}"}
+            )
+        if after.stop_reason:
+            self._guard_stopped = True
+            return False
         return True
 
     @staticmethod

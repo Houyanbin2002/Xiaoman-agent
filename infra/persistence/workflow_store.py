@@ -343,6 +343,131 @@ class WorkflowStore:
             self._record_event(db, resolved, "workflow_started", {})
         return self.require_workflow(resolved)
 
+    def replan_workflow(
+        self,
+        workflow_id: str,
+        *,
+        remaining_steps: Sequence[StepSpec],
+        expected_revision: int,
+        reason: str,
+    ) -> WorkflowInstance:
+        """Replace only unresolved steps while retaining completed evidence."""
+
+        with self._transaction() as db:
+            resolved = self._require_id(db, workflow_id)
+            workflow_row = db.execute(
+                "SELECT status, revision FROM workflows WHERE id = ?", (resolved,)
+            ).fetchone()
+            current_status = WorkflowStatus(str(workflow_row["status"]))
+            current_revision = int(workflow_row["revision"])
+            if current_status in TERMINAL_WORKFLOW_STATUSES:
+                raise ValueError(f"workflow 已结束，不能重规划: {current_status.value}")
+            if current_revision != int(expected_revision):
+                raise ValueError(
+                    "workflow revision 已变化，请重新 get 后再 replan："
+                    f"expected={expected_revision}, current={current_revision}"
+                )
+
+            existing = self._load_steps(db, resolved)
+            if any(step.status == StepStatus.RUNNING for step in existing):
+                raise ValueError(
+                    "仍有 running 步骤，必须等待步骤结束或先取消后再重规划"
+                )
+            preserved = [
+                step for step in existing if step.status in SUCCESS_STEP_STATUSES
+            ]
+            preserved_specs = [
+                StepSpec(
+                    id=step.id,
+                    title=step.title,
+                    description=step.description,
+                    kind=step.kind,
+                    depends_on=step.depends_on,
+                    max_attempts=step.max_attempts,
+                    input=step.input,
+                    executor=step.executor,
+                    profile=step.profile,
+                    allowed_tools=step.allowed_tools,
+                )
+                for step in preserved
+            ]
+            normalized = self._validate_specs([*preserved_specs, *remaining_steps])
+            preserved_ids = {step.id for step in preserved}
+            normalized_remaining = [
+                step for step in normalized if step.id not in preserved_ids
+            ]
+            replaced_ids = [
+                step.id for step in existing if step.id not in preserved_ids
+            ]
+            now = _now()
+            db.execute(
+                "DELETE FROM workflow_steps WHERE workflow_id = ? "
+                "AND status NOT IN (?, ?)",
+                (
+                    resolved,
+                    StepStatus.SUCCEEDED.value,
+                    StepStatus.SKIPPED.value,
+                ),
+            )
+            for position, step in enumerate(preserved):
+                db.execute(
+                    "UPDATE workflow_steps SET position = ?, updated_at = ? "
+                    "WHERE workflow_id = ? AND id = ?",
+                    (position, now, resolved, step.id),
+                )
+            for offset, step in enumerate(normalized_remaining, start=len(preserved)):
+                db.execute(
+                    """
+                    INSERT INTO workflow_steps(
+                        workflow_id, id, position, title, description, kind, status,
+                        depends_on_json, input_json, executor, profile,
+                        allowed_tools_json, max_attempts, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        resolved,
+                        step.id,
+                        offset,
+                        step.title,
+                        step.description,
+                        step.kind.value,
+                        StepStatus.PENDING.value,
+                        _json_dump(list(step.depends_on)),
+                        _json_dump(step.input),
+                        step.executor.value,
+                        step.profile,
+                        _json_dump(list(step.allowed_tools)),
+                        step.max_attempts,
+                        now,
+                        now,
+                    ),
+                )
+            next_status = (
+                WorkflowStatus.DRAFT
+                if current_status == WorkflowStatus.DRAFT
+                else WorkflowStatus.RUNNING
+            )
+            db.execute(
+                "UPDATE workflows SET status = ?, error = '', notified_status = NULL, "
+                "updated_at = ? WHERE id = ?",
+                (next_status.value, now, resolved),
+            )
+            if current_status != WorkflowStatus.DRAFT:
+                self._refresh_workflow_status(db, resolved)
+            self._record_event(
+                db,
+                resolved,
+                "workflow_replanned",
+                {
+                    "base_revision": current_revision,
+                    "reason": reason.strip(),
+                    "preserved_step_ids": [step.id for step in preserved],
+                    "replaced_step_ids": replaced_ids,
+                    "remaining_step_ids": [step.id for step in normalized_remaining],
+                },
+            )
+        return self.require_workflow(resolved)
+
     def cancel_workflow(
         self, workflow_id: str, *, reason: str = ""
     ) -> WorkflowInstance:
@@ -528,8 +653,7 @@ class WorkflowStore:
                 statuses[step.id] = StepStatus.RUNNING
         workflow = self.require_workflow(resolved)
         return [
-            (workflow, self._require_step(workflow, step_id))
-            for step_id in claimed
+            (workflow, self._require_step(workflow, step_id)) for step_id in claimed
         ]
 
     def complete_step(

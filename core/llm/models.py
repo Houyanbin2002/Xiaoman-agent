@@ -12,6 +12,26 @@ class ContextLengthError(Exception):
     """The upstream model provider rejected a request that exceeded its context."""
 
 
+class ToolArgumentsDecodeError(Exception):
+    """A provider returned a tool call whose arguments are not one JSON object."""
+
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        call_id: str,
+        raw_arguments: str,
+        reason: str,
+    ) -> None:
+        self.tool_name = tool_name
+        self.call_id = call_id
+        self.raw_arguments = raw_arguments[:2000]
+        self.reason = reason
+        super().__init__(
+            f"工具 {tool_name or '<unknown>'} 参数不是合法 JSON 对象：{reason}"
+        )
+
+
 @dataclass
 class ToolCall:
     id: str
@@ -30,6 +50,7 @@ class LLMResponse:
     total_tokens: int | None = None
     cache_prompt_tokens: int | None = None
     cache_hit_tokens: int | None = None
+    finish_reason: str | None = None
 
 
 StreamDelta = dict[str, str]

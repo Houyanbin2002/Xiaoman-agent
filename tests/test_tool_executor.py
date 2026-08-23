@@ -186,3 +186,49 @@ def test_tool_executor_post_tool_use_hook_failure_does_not_pollute_success() -> 
     assert result.status == "success"
     assert result.output == {"tool": "dummy", "arguments": {"x": 1}}
     assert result.post_hook_trace[-1].reason == "hook failed: post hook boom"
+
+
+def test_tool_executor_marks_timeout_as_controlled_error() -> None:
+    executor = ToolExecutor()
+
+    async def _slow(_tool_name: str, _arguments: dict[str, Any]) -> Any:
+        await asyncio.sleep(0.1)
+        return "late"
+
+    result = asyncio.run(
+        executor.execute(
+            ToolExecutionRequest(
+                call_id="c1",
+                tool_name="slow",
+                arguments={},
+                source="passive",
+                timeout_seconds=0.01,
+            ),
+            _slow,
+        )
+    )
+
+    assert result.status == "error"
+    assert "超时" in result.output
+
+
+def test_tool_executor_normalizes_registry_error_string() -> None:
+    executor = ToolExecutor()
+
+    async def _legacy_error(_tool_name: str, _arguments: dict[str, Any]) -> Any:
+        return "工具执行出错: legacy failure"
+
+    result = asyncio.run(
+        executor.execute(
+            ToolExecutionRequest(
+                call_id="c1",
+                tool_name="legacy",
+                arguments={},
+                source="passive",
+            ),
+            _legacy_error,
+        )
+    )
+
+    assert result.status == "error"
+    assert result.output == "工具执行出错: legacy failure"

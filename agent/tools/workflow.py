@@ -15,9 +15,11 @@ def _json_text(value: Any) -> str:
 class TaskCreateTool(Tool):
     name = "task_create"
     description = (
-        "创建小满统一管理的持久化任务。它是长任务和后台任务的唯一入口，"
-        "负责步骤依赖、状态、失败重试、用户确认和进程重启恢复。"
-        "普通问答或 1-3 步能立即完成的操作不要创建任务，直接执行。"
+        "创建小满统一管理的持久化 Workflow。仅在任务需要跨时间等待、审批、"
+        "定时触发或多个执行器之间的明确依赖时使用；路径不确定但可连续自主执行的"
+        "任务应留在 AgentLoop，不要为了任务较长而强制创建 Workflow。"
+        "创建时只定义少量粗粒度阶段，不要把每次工具调用展开成完整 DAG；"
+        "中间证据变化后通过 task_manage.replan 替换尚未执行的阶段。"
         "独立调研、分析、写报告等步骤使用 executor=subagent；"
         "需要当前会话完整能力或外部操作的步骤使用 executor=agent。"
         "agent 步骤默认只能调用只读工具；需要写入或外部副作用工具时，"
@@ -43,7 +45,7 @@ class TaskCreateTool(Tool):
             },
             "steps": {
                 "type": "array",
-                "description": "按依赖关系定义的步骤，最多 32 个",
+                "description": "按依赖关系定义的粗粒度阶段，建议 1-7 个，硬上限 32 个",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -201,6 +203,8 @@ class TaskManageTool(Tool):
     description = (
         "查看或控制小满任务中心里的持久化任务。用户回复了任务的问题时，使用 respond；"
         "用户同意/拒绝审批时，使用 approve；还可 list/get/events/start/retry/cancel。"
+        "执行证据推翻原计划时，先 get 获取最新 revision，再用 replan 替换所有未完成步骤；"
+        "已完成步骤及其结果会保留。"
         "当用户问任务进度、后台任务状态、说“继续”“同意”“不同意”或补充信息时，"
         "应先用 list/get 找到当前会话中的任务，再执行对应动作。"
     )
@@ -217,6 +221,7 @@ class TaskManageTool(Tool):
                     "respond",
                     "approve",
                     "retry",
+                    "replan",
                     "cancel",
                 ],
             },
@@ -249,6 +254,22 @@ class TaskManageTool(Tool):
             "note": {
                 "type": "string",
                 "description": "审批说明或取消原因",
+            },
+            "expected_revision": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "replan 时由最近一次 get 返回的 revision，用于防止并发覆盖",
+            },
+            "reason": {
+                "type": "string",
+                "description": "replan 的证据或原因，写入任务事件历史",
+            },
+            "steps": {
+                **TaskCreateTool.parameters["properties"]["steps"],
+                "description": (
+                    "replan 后的全部未完成步骤；可以依赖已完成步骤 ID，"
+                    "但不要重复提交已完成步骤"
+                ),
             },
             "scope": {
                 "type": "string",
@@ -334,6 +355,23 @@ class TaskManageTool(Tool):
                 if not step_id:
                     return "错误：retry 需要 step_id"
                 workflow = self.runtime.store.retry_step(task_id, step_id)
+            elif action == "replan":
+                raw_steps = kwargs.get("steps")
+                reason = str(kwargs.get("reason") or "").strip()
+                if not isinstance(raw_steps, list):
+                    return "错误：replan 需要 steps 数组"
+                if "expected_revision" not in kwargs:
+                    return "错误：replan 需要 expected_revision，请先 get 最新任务"
+                if not reason:
+                    return "错误：replan 需要 reason"
+                workflow = self.runtime.replan_workflow(
+                    task_id,
+                    remaining_steps=[
+                        TaskCreateTool._parse_step(item) for item in raw_steps
+                    ],
+                    expected_revision=int(kwargs["expected_revision"]),
+                    reason=reason,
+                )
             elif action == "cancel":
                 workflow = await self.runtime.cancel_workflow(
                     task_id,

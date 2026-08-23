@@ -19,6 +19,7 @@ from agent.config_models import (
     Config,
     ConversationSemanticsConfig,
     ContextCompactionConfig,
+    ExecutionGuardConfig,
     FitbitIntegrationConfig,
     LangfuseConfig,
     MemoryConfig,
@@ -85,6 +86,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
     agent_context = _as_dict(agent_cfg.get("context"))
     context_compaction = _as_dict(agent_context.get("compaction"))
     prompt_cache = _as_dict(agent_context.get("cache"))
+    execution_guard = _as_dict(agent_cfg.get("guard"))
     agent_tools = _as_dict(agent_cfg.get("tools"))
     agent_maintenance = _as_dict(agent_cfg.get("maintenance"))
     provider = str(llm.get("provider") or data["provider"])
@@ -178,6 +180,68 @@ def load_config(path: str | Path = "config.toml") -> Config:
             ),
             recent_tool_result_chars=max(
                 800, int(prompt_cache.get("recent_tool_result_chars", 24000))
+            ),
+        ).normalized(),
+        execution_guard=ExecutionGuardConfig(
+            enabled=bool(execution_guard.get("enabled", True)),
+            window_rounds=int(execution_guard.get("window_rounds", 6)),
+            same_signature_warn=int(
+                execution_guard.get("same_signature_warn", 2)
+            ),
+            same_signature_stop=int(
+                execution_guard.get("same_signature_stop", 3)
+            ),
+            no_progress_rounds=int(
+                execution_guard.get("no_progress_rounds", 4)
+            ),
+            max_tool_calls=int(execution_guard.get("max_tool_calls", 12)),
+            soft_timeout_seconds=float(
+                execution_guard.get("soft_timeout_seconds", 90)
+            ),
+            hard_timeout_seconds=float(
+                execution_guard.get("hard_timeout_seconds", 150)
+            ),
+            model_call_timeout_seconds=float(
+                execution_guard.get("model_call_timeout_seconds", 90)
+            ),
+            tool_timeout_seconds=float(
+                execution_guard.get("tool_timeout_seconds", 45)
+            ),
+            side_effect_tool_timeout_seconds=float(
+                execution_guard.get("side_effect_tool_timeout_seconds", 30)
+            ),
+            context_soft_tokens=int(
+                execution_guard.get("context_soft_tokens", 120_000)
+            ),
+            context_hard_tokens=int(
+                execution_guard.get("context_hard_tokens", 160_000)
+            ),
+            max_tool_result_chars=int(
+                execution_guard.get("max_tool_result_chars", 12_000)
+            ),
+            max_tool_round_chars=int(
+                execution_guard.get("max_tool_round_chars", 24_000)
+            ),
+            max_turn_tool_result_chars=int(
+                execution_guard.get("max_turn_tool_result_chars", 60_000)
+            ),
+            subagent_max_iterations=int(
+                execution_guard.get("subagent_max_iterations", 10)
+            ),
+            subagent_timeout_seconds=float(
+                execution_guard.get("subagent_timeout_seconds", 90)
+            ),
+            subagent_result_chars=int(
+                execution_guard.get("subagent_result_chars", 12_000)
+            ),
+            workflow_max_concurrency=int(
+                execution_guard.get("workflow_max_concurrency", 2)
+            ),
+            workflow_step_timeout_seconds=float(
+                execution_guard.get("workflow_step_timeout_seconds", 180)
+            ),
+            workflow_max_subagent_steps=int(
+                execution_guard.get("workflow_max_subagent_steps", 4)
             ),
         ).normalized(),
         dev_mode=bool(

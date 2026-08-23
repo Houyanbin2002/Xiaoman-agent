@@ -867,7 +867,7 @@ async def test_drift_pipeline_wraps_up_at_step_limit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_drift_pipeline_does_not_restrict_before_step_limit(tmp_path: Path):
+async def test_drift_pipeline_converges_repeated_read_before_step_limit(tmp_path: Path):
     _write_skill(tmp_path)
     store = DriftStateStore(tmp_path)
     captured: list[tuple[list[str], str | dict]] = []
@@ -905,14 +905,15 @@ async def test_drift_pipeline_does_not_restrict_before_step_limit(tmp_path: Path
     await pipeline.run(ctx, cast(Any, llm))
     assert captured[0][0] == ["select_skill", "idle_drift"]
     assert captured[0][1] == "required"
-    for schemas, tool_choice in captured[1:6]:
+    for schemas, tool_choice in captured[1:3]:
         assert tool_choice == "required"
         assert "read_file" in schemas
         assert "write_file" in schemas
         assert "shell" in schemas
         assert "finish_drift" in schemas
-    assert captured[6][0] == ["finish_drift"]
-    assert captured[6][1] == {"type": "function", "function": {"name": "finish_drift"}}
+    # 第三个重复 read_file 已被模型提出但不会执行，随后进入强制收尾。
+    assert captured[4][0] == ["finish_drift"]
+    assert captured[4][1] == {"type": "function", "function": {"name": "finish_drift"}}
     assert ctx.drift_finished is True
     assert store.load_drift()["recent_runs"][-1]["status"] == "paused"
 

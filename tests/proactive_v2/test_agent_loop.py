@@ -32,8 +32,8 @@ from tests.proactive_v2.conftest import FakeLLM, cfg_with, make_proactive_pipeli
 # ── max_steps 保护 ────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_loop_stops_at_max_steps():
-    """LLM 一直返回非终止工具 → loop 在 max_steps 处退出"""
+async def test_loop_stops_repeated_tool_before_max_steps():
+    """完全相同的工具调用应在第三次执行前收敛。"""
     llm = FakeLLM([("get_recent_chat", {})] * 25)
     tick = make_proactive_pipeline(
         llm_fn=llm,
@@ -41,12 +41,12 @@ async def test_loop_stops_at_max_steps():
         tool_deps=ToolDeps(recent_chat_fn=AsyncMock(return_value=[])),
     )
     await run_proactive_pipeline(tick)
-    assert tick.last_ctx.steps_taken == 20
+    assert tick.last_ctx.steps_taken == 3
     assert tick.last_ctx.terminal_action is None
 
 
 @pytest.mark.asyncio
-async def test_loop_max_steps_configurable():
+async def test_loop_guard_precedes_configured_max_steps():
     llm = FakeLLM([("get_recent_chat", {})] * 15)
     tick = make_proactive_pipeline(
         llm_fn=llm,
@@ -54,7 +54,7 @@ async def test_loop_max_steps_configurable():
         tool_deps=ToolDeps(recent_chat_fn=AsyncMock(return_value=[])),
     )
     await run_proactive_pipeline(tick)
-    assert tick.last_ctx.steps_taken == 5
+    assert tick.last_ctx.steps_taken == 3
 
 
 # ── LLM 返回 None → 结束 ─────────────────────────────────────────────────

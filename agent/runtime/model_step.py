@@ -109,6 +109,7 @@ async def run_model_step(
             "total_tokens": getattr(response, "total_tokens", None),
             "cache_prompt_tokens": getattr(response, "cache_prompt_tokens", None),
             "cache_hit_tokens": getattr(response, "cache_hit_tokens", None),
+            "finish_reason": getattr(response, "finish_reason", None),
             "prompt_cache": dict(cache_metadata or {}),
         },
     )

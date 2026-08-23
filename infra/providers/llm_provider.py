@@ -24,6 +24,7 @@ from core.llm.models import (
     ContextLengthError,
     LLMResponse,
     StreamDelta,
+    ToolArgumentsDecodeError,
     ToolCall,
 )
 
@@ -51,6 +52,45 @@ _CONTEXT_LENGTH_KEYWORDS = (
     "reduce the length",  # 通用
     "too many tokens",  # 通用
 )
+
+
+def _decode_tool_arguments(
+    raw_arguments: object,
+    *,
+    tool_name: str,
+    call_id: str,
+) -> dict[str, Any]:
+    """Decode exactly one JSON object or raise a model-recoverable protocol error."""
+
+    raw = str(raw_arguments or "{}")
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        if exc.msg == "Extra data":
+            cause = "JSON 对象后存在多余内容或第二个 JSON"
+        elif "Unterminated string" in exc.msg:
+            cause = "JSON 字符串没有正确闭合"
+        elif "delimiter" in exc.msg:
+            cause = "JSON 对象或数组缺少分隔符/结束符"
+        elif "property name" in exc.msg:
+            cause = "JSON 属性名必须使用双引号并正确分隔"
+        else:
+            cause = f"JSON 语法错误：{exc.msg}"
+        reason = f"{cause}（第 {exc.lineno} 行，第 {exc.colno} 列）"
+        raise ToolArgumentsDecodeError(
+            tool_name=tool_name,
+            call_id=call_id,
+            raw_arguments=raw,
+            reason=reason,
+        ) from exc
+    if not isinstance(decoded, dict):
+        raise ToolArgumentsDecodeError(
+            tool_name=tool_name,
+            call_id=call_id,
+            raw_arguments=raw,
+            reason=f"工具 arguments 顶层必须是 JSON 对象，实际为 {type(decoded).__name__}",
+        )
+    return decoded
 
 
 class ProviderStrategy:
@@ -320,11 +360,17 @@ class LLMProvider:
         tool_calls = []
         if msg.tool_calls:
             for tc in msg.tool_calls:
+                tool_name = str(tc.function.name or "")
+                call_id = str(tc.id or "")
                 tool_calls.append(
                     ToolCall(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=json.loads(tc.function.arguments),
+                        id=call_id,
+                        name=tool_name,
+                        arguments=_decode_tool_arguments(
+                            tc.function.arguments,
+                            tool_name=tool_name,
+                            call_id=call_id,
+                        ),
                     )
                 )
 
@@ -347,6 +393,9 @@ class LLMProvider:
             total_tokens=total_tokens,
             cache_prompt_tokens=cache_prompt_tokens,
             cache_hit_tokens=cache_hit_tokens,
+            finish_reason=(
+                str(getattr(resp.choices[0], "finish_reason", "") or "") or None
+            ),
         )
 
     async def _chat_streaming(
@@ -375,6 +424,7 @@ class LLMProvider:
         input_tokens: int | None = None
         output_tokens: int | None = None
         total_tokens: int | None = None
+        finish_reason: str | None = None
 
         stream_iter = aiter(stream)
         while True:
@@ -401,6 +451,9 @@ class LLMProvider:
             if not choices:
                 continue
             choice = choices[0]
+            choice_finish = getattr(choice, "finish_reason", None)
+            if choice_finish is not None:
+                finish_reason = str(choice_finish)
             delta = getattr(choice, "delta", None)
             if delta is None:
                 continue
@@ -435,11 +488,17 @@ class LLMProvider:
         for idx in sorted(tool_call_chunks):
             item = tool_call_chunks[idx]
             raw_args = item.get("arguments", "") or "{}"
+            tool_name = item.get("name", "")
+            call_id = item.get("id", "")
             tool_calls.append(
                 ToolCall(
-                    id=item.get("id", ""),
-                    name=item.get("name", ""),
-                    arguments=json.loads(raw_args),
+                    id=call_id,
+                    name=tool_name,
+                    arguments=_decode_tool_arguments(
+                        raw_args,
+                        tool_name=tool_name,
+                        call_id=call_id,
+                    ),
                 )
             )
 
@@ -465,6 +524,7 @@ class LLMProvider:
             total_tokens=total_tokens,
             cache_prompt_tokens=cache_prompt_tokens,
             cache_hit_tokens=cache_hit_tokens,
+            finish_reason=finish_reason,
         )
 
     async def _create_with_retry(

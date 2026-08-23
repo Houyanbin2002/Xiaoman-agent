@@ -322,7 +322,7 @@ async def test_active_plugins_exposes_loaded_manifest():
         active = mgr.active_plugins()
         assert len(active) == 1
         assert active[0].plugin_id == "manifest_name"
-        assert active[0].plugin_dir == Path(tmp) / "manifested"
+        assert active[0].plugin_dir == (Path(tmp) / "manifested").resolve()
         assert active[0].manifest["name"] == "manifest_name"
 
 
@@ -384,7 +384,7 @@ async def test_loads_installed_xiaoman_plugin_descriptor_without_lifecycle():
         active = mgr.active_plugins()
         assert len(active) == 1
         assert active[0].plugin_id == "feed@lab"
-        assert active[0].skill_roots == (plugin_root / "skills",)
+        assert active[0].skill_roots == ((plugin_root / "skills").resolve(),)
         assert "feed" in active[0].mcp_servers
         assert mgr.loaded_count == 1
 

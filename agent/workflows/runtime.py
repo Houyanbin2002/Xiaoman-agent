@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -13,6 +14,7 @@ from langgraph.types import Command, interrupt
 from agent.tools.registry import ToolRegistry
 from agent.runtime.langgraph_runtime import LangGraphRuntime
 from core.workflow.models import (
+    SUCCESS_STEP_STATUSES,
     StepExecutor,
     StepKind,
     StepSpec,
@@ -86,7 +88,9 @@ class WorkflowRuntime:
         trace_recorder: TraceRecorder | None = None,
         graph_runtime: LangGraphRuntime | None = None,
         poll_interval_seconds: float = 1.0,
-        max_concurrency: int = 3,
+        max_concurrency: int = 2,
+        step_timeout_seconds: float = 180.0,
+        max_subagent_steps: int = 4,
     ) -> None:
         self.store = store
         self._agent_loop_provider = agent_loop_provider
@@ -99,6 +103,8 @@ class WorkflowRuntime:
         self._graph_lock = asyncio.Lock()
         self._poll_interval_seconds = max(0.1, poll_interval_seconds)
         self._max_concurrency = max(1, max_concurrency)
+        self._step_timeout_seconds = max(10.0, float(step_timeout_seconds))
+        self._max_subagent_steps = max(1, int(max_subagent_steps))
         self._execution_slots = asyncio.Semaphore(self._max_concurrency)
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
@@ -136,6 +142,16 @@ class WorkflowRuntime:
         )
 
     def _validate_step_permissions(self, steps: Sequence[StepSpec]) -> None:
+        subagent_steps = sum(
+            1
+            for step in steps
+            if step.kind == StepKind.AGENT and step.executor == StepExecutor.SUBAGENT
+        )
+        if subagent_steps > self._max_subagent_steps:
+            raise ValueError(
+                "单个 Workflow 最多允许 "
+                f"{self._max_subagent_steps} 个 SubAgent 步骤，当前为 {subagent_steps}"
+            )
         tool_risks = self._tool_risks()
         by_id = {step.id: step for step in steps}
         for step in steps:
@@ -176,6 +192,66 @@ class WorkflowRuntime:
                     f"步骤 {step.id} 使用 subagent profile={profile} 时，"
                     "必须直接依赖 approval 步骤"
                 )
+
+    def replan_workflow(
+        self,
+        workflow_id: str,
+        *,
+        remaining_steps: Sequence[StepSpec],
+        expected_revision: int,
+        reason: str,
+    ) -> WorkflowInstance:
+        """Validate and replace the unresolved tail of a persisted plan."""
+
+        current = self.store.require_workflow(workflow_id)
+        preserved = [
+            step for step in current.steps if step.status in SUCCESS_STEP_STATUSES
+        ]
+        preserved_specs = [
+            StepSpec(
+                id=step.id,
+                title=step.title,
+                description=step.description,
+                kind=step.kind,
+                depends_on=step.depends_on,
+                max_attempts=step.max_attempts,
+                input=step.input,
+                executor=step.executor,
+                profile=step.profile,
+                allowed_tools=step.allowed_tools,
+            )
+            for step in preserved
+        ]
+        combined = [*preserved_specs, *remaining_steps]
+        self._validate_step_permissions(combined)
+
+        # A completed approval only covered the old plan. Any newly introduced
+        # side effect or privileged child must carry a new approval step.
+        new_by_id = {step.id: step for step in remaining_steps}
+        tool_risks = self._tool_risks()
+        for step in remaining_steps:
+            requires_fresh_approval = any(
+                tool_risks.get(name, _READ_ONLY_RISK) != _READ_ONLY_RISK
+                for name in step.allowed_tools
+            ) or (
+                step.kind == StepKind.AGENT
+                and step.executor == StepExecutor.SUBAGENT
+                and step.profile in _APPROVAL_REQUIRED_SUBAGENT_PROFILES
+            )
+            if requires_fresh_approval and not any(
+                (dependency := new_by_id.get(dependency_id)) is not None
+                and dependency.kind == StepKind.APPROVAL
+                for dependency_id in step.depends_on
+            ):
+                raise ValueError(
+                    f"重规划步骤 {step.id} 扩大了权限，必须依赖本次计划中新建的 approval 步骤"
+                )
+        return self.store.replan_workflow(
+            current.id,
+            remaining_steps=remaining_steps,
+            expected_revision=expected_revision,
+            reason=reason,
+        )
 
     def _tool_risks(self) -> dict[str, str]:
         return {
@@ -231,6 +307,11 @@ class WorkflowRuntime:
                 await asyncio.wait_for(self._stopped.wait(), timeout=5.0)
             except TimeoutError:
                 logger.warning("workflow runtime did not stop before store close")
+        close_subagent = getattr(self.subagent_executor, "aclose", None)
+        if callable(close_subagent):
+            close_result = close_subagent()
+            if inspect.isawaitable(close_result):
+                await close_result
         await self._graph_runtime.aclose()
         self.store.close()
 
@@ -293,9 +374,7 @@ class WorkflowRuntime:
             )
         await graph.ainvoke(graph_input, config, durability="sync")
 
-    async def _advance_node(
-        self, state: WorkflowGraphState
-    ) -> dict[str, Any]:
+    async def _advance_node(self, state: WorkflowGraphState) -> dict[str, Any]:
         workflow_id = state["workflow_id"]
         # Projection updates are atomic; graph checkpoints own execution
         # position while this table remains query-friendly for tools and UI.
@@ -338,9 +417,7 @@ class WorkflowRuntime:
         async with self._execution_slots:
             await self._execute_step(workflow, step)
 
-    async def _wait_human_node(
-        self, state: WorkflowGraphState
-    ) -> dict[str, Any]:
+    async def _wait_human_node(self, state: WorkflowGraphState) -> dict[str, Any]:
         await self._deliver_waiting_prompts()
         workflow = self.store.require_workflow(state["workflow_id"])
         if workflow.status == WorkflowStatus.WAITING:
@@ -474,42 +551,31 @@ class WorkflowRuntime:
             if current is None or current.status != StepStatus.RUNNING:
                 return
             prompt = self._build_step_prompt(latest, current)
-            if current.executor == StepExecutor.SUBAGENT:
-                if self.subagent_executor is None:
-                    raise RuntimeError("Subagent 步骤执行器未启用")
-                if (
-                    current.profile in _APPROVAL_REQUIRED_SUBAGENT_PROFILES
-                    and not self._has_approved_dependency(latest, current)
-                ):
-                    raise RuntimeError(
-                        f"步骤 {current.id} 使用 subagent profile={current.profile} "
-                        "时缺少已批准的直接 approval 依赖"
-                    )
-                result = await self.subagent_executor.execute(
-                    task=prompt,
-                    label=f"{latest.name}-{current.title}"[:30],
-                    profile=current.profile,
-                    execution_id=f"task-{latest.id[:12]}-{current.id}",
-                )
-            else:
-                loop = self._agent_loop_provider()
-                if loop is None:
-                    raise RuntimeError("AgentLoop 尚未就绪")
-                result = await loop.process_direct(
-                    prompt,
-                    session_key=f"workflow:{latest.id}",
-                    busy_session_key=latest.session_key or None,
-                    channel=latest.channel or "workflow",
-                    chat_id=latest.chat_id or latest.id,
-                    omit_user_turn=True,
-                    skip_post_memory=True,
-                    stream_events=False,
-                    disabled_tools=self._disabled_tools_for_step(latest, current),
-                )
+            result = await asyncio.wait_for(
+                self._run_step_executor(latest, current, prompt),
+                timeout=self._step_timeout_seconds,
+            )
             output = result.strip() or "步骤已完成，但没有返回文本结果。"
             self.store.complete_step(latest.id, current.id, output=output)
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.warning(
+                "workflow step timed out workflow=%s step=%s timeout=%ss",
+                workflow.id,
+                step.id,
+                self._step_timeout_seconds,
+            )
+            delay = min(60.0, 2.0 ** max(1, step.attempt_count))
+            self.store.fail_step(
+                workflow.id,
+                step.id,
+                error=(
+                    "步骤执行超时（"
+                    f"{self._step_timeout_seconds:g}s），已停止本次尝试"
+                ),
+                retry_delay_seconds=delay,
+            )
         except Exception as exc:
             logger.exception(
                 "workflow step failed workflow=%s step=%s", workflow.id, step.id
@@ -521,6 +587,45 @@ class WorkflowRuntime:
                 error=str(exc),
                 retry_delay_seconds=delay,
             )
+
+    async def _run_step_executor(
+        self,
+        workflow: WorkflowInstance,
+        step: WorkflowStep,
+        prompt: str,
+    ) -> str:
+        if step.executor == StepExecutor.SUBAGENT:
+            if self.subagent_executor is None:
+                raise RuntimeError("Subagent 步骤执行器未启用")
+            if (
+                step.profile in _APPROVAL_REQUIRED_SUBAGENT_PROFILES
+                and not self._has_approved_dependency(workflow, step)
+            ):
+                raise RuntimeError(
+                    f"步骤 {step.id} 使用 subagent profile={step.profile} "
+                    "时缺少已批准的直接 approval 依赖"
+                )
+            return await self.subagent_executor.execute(
+                task=prompt,
+                label=f"{workflow.name}-{step.title}"[:30],
+                profile=step.profile,
+                execution_id=f"task-{workflow.id[:12]}-{step.id}",
+            )
+
+        loop = self._agent_loop_provider()
+        if loop is None:
+            raise RuntimeError("AgentLoop 尚未就绪")
+        return await loop.process_direct(
+            prompt,
+            session_key=f"workflow:{workflow.id}",
+            busy_session_key=workflow.session_key or None,
+            channel=workflow.channel or "workflow",
+            chat_id=workflow.chat_id or workflow.id,
+            omit_user_turn=True,
+            skip_post_memory=True,
+            stream_events=False,
+            disabled_tools=self._disabled_tools_for_step(workflow, step),
+        )
 
     def _disabled_tools_for_step(
         self,

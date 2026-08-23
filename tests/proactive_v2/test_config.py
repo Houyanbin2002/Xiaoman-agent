@@ -21,7 +21,7 @@ def test_use_agent_tick_removed():
 # ── agent loop ───────────────────────────────────────────────────────────
 
 def test_agent_tick_max_steps_default():
-    assert ProactiveConfig().agent_tick_max_steps == 35
+    assert ProactiveConfig().agent_tick_max_steps == 12
 
 
 def test_agent_tick_max_steps_is_int():
@@ -85,7 +85,7 @@ def test_drift_enabled_default_false():
 
 
 def test_drift_max_steps_default():
-    assert ProactiveConfig().drift_max_steps == 20
+    assert ProactiveConfig().drift_max_steps == 8
 
 
 def test_drift_dir_removed():

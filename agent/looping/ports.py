@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from agent.runtime.prompt_cache import PromptCacheConfig
 from agent.runtime.context_compaction import ContextCompactionConfig
+from agent.runtime.execution_guard import ExecutionGuardConfig
 
 if TYPE_CHECKING:
     from agent.context import ContextBuilder
@@ -105,3 +106,6 @@ class AgentLoopConfig:
         default_factory=ContextCompactionConfig
     )
     prompt_cache: PromptCacheConfig = field(default_factory=PromptCacheConfig)
+    execution_guard: ExecutionGuardConfig = field(
+        default_factory=ExecutionGuardConfig
+    )

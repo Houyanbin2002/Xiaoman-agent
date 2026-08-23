@@ -17,6 +17,7 @@ DriftTurnPipeline — Drift 空闲时间链路顶层抽象。
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -32,6 +33,12 @@ from agent.prompting import (
 )
 from agent.tool_hooks import ToolExecutionRequest, ToolExecutor
 from agent.tool_hooks.base import ToolHook
+from agent.runtime.execution_guard import (
+    ExecutionGuard,
+    ExecutionGuardConfig,
+    bound_tool_result,
+)
+from agent.tools.base import ToolResult
 from proactive_v2.context import AgentTickContext
 from proactive_v2.drift_state import DriftStateStore, SkillMeta
 from proactive_v2.drift_tools import (
@@ -186,6 +193,17 @@ class DriftTurnPipeline:
 
         steps = 0
         constraint_rejections = 0
+        guard = ExecutionGuard(
+            ExecutionGuardConfig(
+                max_tool_calls=self._max_steps,
+                soft_timeout_seconds=45,
+                hard_timeout_seconds=90,
+                max_tool_result_chars=12_000,
+                max_tool_round_chars=12_000,
+                max_turn_tool_result_chars=48_000,
+            )
+        )
+        guard_state = guard.initial_state()
 
         while steps < self._max_steps and not ctx.drift_finished:
             tool_choice: str | dict = "required"
@@ -214,13 +232,25 @@ class DriftTurnPipeline:
                 )
 
             # 3.2 调 LLM 拿工具调用。
-            if "disable_thinking" in inspect.signature(llm_fn).parameters:
-                tool_call = await cast(Any, llm_fn)(
-                    messages, schemas, tool_choice,
-                    disable_thinking=True,
-                )
-            else:
-                tool_call = await cast(Any, llm_fn)(messages, schemas, tool_choice)
+            try:
+                if "disable_thinking" in inspect.signature(llm_fn).parameters:
+                    tool_call = await asyncio.wait_for(
+                        cast(Any, llm_fn)(
+                            messages, schemas, tool_choice,
+                            disable_thinking=True,
+                        ),
+                        timeout=guard.config.model_call_timeout_seconds,
+                    )
+                else:
+                    tool_call = await asyncio.wait_for(
+                        cast(Any, llm_fn)(messages, schemas, tool_choice),
+                        timeout=guard.config.model_call_timeout_seconds,
+                    )
+            except TimeoutError:
+                logger.warning("[drift] model call timed out at step=%d", steps)
+                if ctx.drift_selected_skill and not ctx.drift_finished:
+                    self._fallback_pause(ctx)
+                return
 
             if tool_call is None:
                 logger.warning("[drift] llm returned no tool call at step=%d", steps)
@@ -283,6 +313,30 @@ class DriftTurnPipeline:
                 continue
 
             # 3.3 执行工具。
+            call_id = str(tool_call.get("id") or f"drift_{steps}")
+            call_record = {
+                "call_id": call_id,
+                "name": tool_name,
+                "arguments": tool_args,
+            }
+            before = guard.before_tool_batch(
+                guard_state,
+                [call_record],
+                risk_resolver=tools.get_risk,
+            )
+            guard_state = before.state
+            if before.stop_reason:
+                output = f"Drift 执行已收敛：{before.stop_reason}"
+                self._append_tool_messages(
+                    messages,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    tool_call_id=call_id,
+                    result=output,
+                )
+                if ctx.drift_selected_skill and not ctx.drift_finished:
+                    await self._wrap_up(ctx, llm_fn, tools, messages)
+                return
             result = await self._tool_executor.execute(
                 ToolExecutionRequest(
                     call_id=str(tool_call.get("id") or f"drift_{steps}"),
@@ -290,18 +344,28 @@ class DriftTurnPipeline:
                     arguments=tool_args,
                     source="proactive",
                     session_key=ctx.session_key,
+                    timeout_seconds=guard.tool_timeout(tools.get_risk(tool_name)),
                 ),
                 tools.execute,
             )
+            result_text = bound_tool_result(
+                ToolResult(text=str(result.output)),
+                guard.config.max_tool_result_chars,
+            ).text
+            after = guard.after_tool_round(
+                guard_state,
+                [{**call_record, "status": result.status, "result": result_text}],
+            )
+            guard_state = after.state
 
             # 3.4 错误处理。
             if result.status == "error":
-                logger.warning("[drift] tool executor error at step=%d: %s", steps, result.output)
+                logger.warning("[drift] tool executor error at step=%d: %s", steps, result_text)
                 self._store.append_step(
                     step_index=steps,
                     tool_name=tool_name,
                     input_preview=json.dumps(tool_args, ensure_ascii=False),
-                    output_preview=str(result.output),
+                    output_preview=result_text,
                     now_utc=ctx.now_utc,
                 )
                 if self.step_recorder is not None:
@@ -311,7 +375,7 @@ class DriftTurnPipeline:
                         tool_name,
                         str(tool_call.get("id") or f"drift_{steps}"),
                         tool_args,
-                        str(result.output),
+                        result_text,
                     )
                 break
 
@@ -320,7 +384,7 @@ class DriftTurnPipeline:
                 step_index=steps,
                 tool_name=tool_name,
                 input_preview=json.dumps(tool_args, ensure_ascii=False),
-                output_preview=str(result.output),
+                output_preview=result_text,
                 now_utc=ctx.now_utc,
             )
             if self.step_recorder is not None:
@@ -330,14 +394,14 @@ class DriftTurnPipeline:
                     tool_name,
                     str(tool_call.get("id") or f"drift_{steps}"),
                     tool_args,
-                    str(result.output),
+                    result_text,
                 )
 
             logger.info(
                 "[drift] step=%d tool=%s result=%s",
                 steps,
                 tool_name,
-                str(result.output)[:300],
+                result_text[:300],
             )
 
             # 3.8 追加 tool messages 到对话历史。
@@ -346,8 +410,16 @@ class DriftTurnPipeline:
                 tool_name=tool_name,
                 tool_args=tool_args,
                 tool_call_id=str(tool_call.get("id") or f"drift_{steps}"),
-                result=str(result.output),
+                result=result_text,
             )
+            if after.hint:
+                messages.append(
+                    {"role": "system", "content": f"【执行保护】{after.hint}"}
+                )
+            if after.stop_reason:
+                if ctx.drift_selected_skill and not ctx.drift_finished:
+                    await self._wrap_up(ctx, llm_fn, tools, messages)
+                return
             constraint_rejections = 0
 
         if steps >= self._max_steps and not ctx.drift_finished:
@@ -398,12 +470,26 @@ class DriftTurnPipeline:
                 )
 
             tool_choice = {"type": "function", "function": {"name": "finish_drift"}}
-            if "disable_thinking" in inspect.signature(llm_fn).parameters:
-                tool_call = await cast(Any, llm_fn)(
-                    messages, finish_schemas, tool_choice, disable_thinking=True
-                )
-            else:
-                tool_call = await cast(Any, llm_fn)(messages, finish_schemas, tool_choice)
+            try:
+                if "disable_thinking" in inspect.signature(llm_fn).parameters:
+                    tool_call = await asyncio.wait_for(
+                        cast(Any, llm_fn)(
+                            messages,
+                            finish_schemas,
+                            tool_choice,
+                            disable_thinking=True,
+                        ),
+                        timeout=90,
+                    )
+                else:
+                    tool_call = await asyncio.wait_for(
+                        cast(Any, llm_fn)(messages, finish_schemas, tool_choice),
+                        timeout=90,
+                    )
+            except TimeoutError:
+                rejection = "收尾模型调用超时"
+                logger.warning("[drift] wrap-up model call timed out attempt=%d", attempt)
+                continue
             if tool_call is None:
                 rejection = "没有返回工具调用"
                 logger.warning("[drift] wrap-up llm returned no tool call attempt=%d", attempt)
@@ -431,14 +517,19 @@ class DriftTurnPipeline:
                     arguments=tool_args,
                     source="proactive",
                     session_key=ctx.session_key,
+                    timeout_seconds=30,
                 ),
                 tools.execute,
             )
+            result_text = bound_tool_result(
+                ToolResult(text=str(result.output)),
+                12_000,
+            ).text
             self._store.append_step(
                 step_index=ctx.steps_taken + attempt,
                 tool_name=tool_name,
                 input_preview=json.dumps(tool_args, ensure_ascii=False),
-                output_preview=str(result.output),
+                output_preview=result_text,
                 now_utc=ctx.now_utc,
             )
             if self.step_recorder is not None:
@@ -448,22 +539,22 @@ class DriftTurnPipeline:
                     tool_name,
                     str(tool_call.get("id") or "drift_wrap_up"),
                     tool_args,
-                    str(result.output),
+                    result_text,
                 )
             self._append_tool_messages(
                 messages,
                 tool_name=tool_name,
                 tool_args=tool_args,
                 tool_call_id=str(tool_call.get("id") or "drift_wrap_up"),
-                result=str(result.output),
+                result=result_text,
             )
             if result.status == "error":
-                rejection = f"finish_drift 执行失败：{result.output}"
-                logger.warning("[drift] wrap-up finish error: %s", result.output)
+                rejection = f"finish_drift 执行失败：{result_text}"
+                logger.warning("[drift] wrap-up finish error: %s", result_text)
                 continue
             if ctx.drift_finished:
                 return
-            rejection = f"finish_drift 未完成：{result.output}"
+            rejection = f"finish_drift 未完成：{result_text}"
 
         logger.warning("[drift] wrap-up exhausted, fallback pause: %s", rejection)
         self._fallback_pause(ctx)

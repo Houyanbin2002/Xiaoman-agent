@@ -117,6 +117,7 @@ class ProviderChatModel(BaseChatModel):
                 "total_tokens": response.total_tokens,
                 "cache_prompt_tokens": response.cache_prompt_tokens,
                 "cache_hit_tokens": response.cache_hit_tokens,
+                "finish_reason": response.finish_reason,
             },
         )
         return ChatResult(generations=[ChatGeneration(message=message)])

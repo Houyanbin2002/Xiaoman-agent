@@ -94,6 +94,96 @@ def test_store_advances_dependencies_and_waiting_steps(tmp_path: Path):
     store.close()
 
 
+def test_store_replan_preserves_completed_steps_and_replaces_pending_tail(
+    tmp_path: Path,
+):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    workflow = store.create_workflow(
+        name="adaptive research",
+        goal="adjust the remaining plan from evidence",
+        steps=[
+            _spec("collect"),
+            _spec("obsolete", depends_on=("collect",)),
+        ],
+        session_key="cli:1",
+        channel="cli",
+        chat_id="1",
+    )
+    claimed = store.claim_runnable_steps(limit=1)
+    assert claimed[0][1].id == "collect"
+    completed = store.complete_step(workflow.id, "collect", output="new evidence")
+
+    replanned = store.replan_workflow(
+        workflow.id,
+        remaining_steps=[_spec("analyze", depends_on=("collect",))],
+        expected_revision=completed.revision,
+        reason="collected evidence invalidated the old step",
+    )
+
+    assert [step.id for step in replanned.steps] == ["collect", "analyze"]
+    assert replanned.steps[0].status == StepStatus.SUCCEEDED
+    assert replanned.steps[0].output == "new evidence"
+    assert replanned.steps[1].status == StepStatus.PENDING
+    assert replanned.status == WorkflowStatus.RUNNING
+    assert store.claim_runnable_steps(limit=1)[0][1].id == "analyze"
+    event = next(
+        item
+        for item in store.list_events(workflow.id)
+        if item.event_type == "workflow_replanned"
+    )
+    assert event.payload["preserved_step_ids"] == ["collect"]
+    assert event.payload["replaced_step_ids"] == ["obsolete"]
+    store.close()
+
+
+def test_store_replan_rejects_stale_revision(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    workflow = store.create_workflow(
+        name="revision guard",
+        goal="prevent lost updates",
+        steps=[_spec("old")],
+        session_key="cli:1",
+        channel="cli",
+        chat_id="1",
+    )
+
+    with pytest.raises(ValueError, match="revision 已变化"):
+        store.replan_workflow(
+            workflow.id,
+            remaining_steps=[_spec("new")],
+            expected_revision=workflow.revision - 1,
+            reason="stale planner output",
+        )
+    assert [step.id for step in store.require_workflow(workflow.id).steps] == ["old"]
+    store.close()
+
+
+def test_runtime_rejects_too_many_subagent_steps(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    runtime = WorkflowRuntime(
+        store=store,
+        agent_loop_provider=lambda: None,
+        push_tool=_FakePush(),  # type: ignore[arg-type]
+        subagent_executor=_FakeSubagentExecutor(),
+        max_subagent_steps=2,
+    )
+
+    with pytest.raises(ValueError, match="最多允许 2 个 SubAgent"):
+        runtime.create_workflow(
+            name="too many children",
+            goal="fan out",
+            steps=[
+                _spec(f"child-{index}", executor=StepExecutor.SUBAGENT)
+                for index in range(3)
+            ],
+            session_key="dashboard:test",
+            channel="dashboard",
+            chat_id="test",
+        )
+
+    asyncio.run(runtime.aclose())
+
+
 def test_store_discards_late_agent_results_after_cancellation(tmp_path: Path):
     store = WorkflowStore(tmp_path / "workflows.db")
     workflow = store.create_workflow(
@@ -777,6 +867,94 @@ async def test_task_tools_create_and_resume_waiting_task(tmp_path: Path):
     )
     assert '"status": "succeeded"' in resumed
     assert store.require_workflow(workflow_id).steps[0].output == {"response": "good"}
+    await runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_task_manage_replan_replaces_only_unfinished_steps(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    runtime = WorkflowRuntime(
+        store=store,
+        agent_loop_provider=lambda: None,
+        push_tool=_FakePush(),  # type: ignore[arg-type]
+    )
+    workflow = runtime.create_workflow(
+        name="coarse plan",
+        goal="adapt at a step boundary",
+        steps=[_spec("old")],
+        session_key="dashboard:test",
+        channel="dashboard",
+        chat_id="test",
+    )
+
+    result = await TaskManageTool(runtime).execute(
+        action="replan",
+        task_id=workflow.id[:8],
+        expected_revision=workflow.revision,
+        reason="new evidence requires a different approach",
+        steps=[
+            {
+                "id": "new",
+                "title": "New approach",
+                "description": "Use the new evidence",
+                "kind": "agent",
+            }
+        ],
+    )
+
+    assert '"status": "running"' in result
+    assert [step.id for step in store.require_workflow(workflow.id).steps] == ["new"]
+    assert "workflow_replanned" in {
+        event.event_type for event in store.list_events(workflow.id)
+    }
+    await runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_replan_requires_fresh_approval_for_new_side_effect(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    runtime = WorkflowRuntime(
+        store=store,
+        agent_loop_provider=lambda: None,
+        push_tool=_FakePush(),  # type: ignore[arg-type]
+        tool_registry=_permission_registry(),
+    )
+    workflow = runtime.create_workflow(
+        name="approved old plan",
+        goal="do one approved write",
+        steps=[
+            _spec("old_approval", kind=StepKind.APPROVAL),
+            _spec(
+                "old_write",
+                depends_on=("old_approval",),
+                allowed_tools=("write_data",),
+            ),
+        ],
+        session_key="dashboard:test",
+        channel="dashboard",
+        chat_id="test",
+    )
+    store.prepare_human_steps()
+    approved = store.approve_step(
+        workflow.id,
+        "old_approval",
+        approved=True,
+    )
+
+    with pytest.raises(ValueError, match="本次计划中新建的 approval"):
+        runtime.replan_workflow(
+            workflow.id,
+            remaining_steps=[
+                _spec(
+                    "new_write",
+                    depends_on=("old_approval",),
+                    allowed_tools=("write_data",),
+                )
+            ],
+            expected_revision=approved.revision,
+            reason="change write target",
+        )
+
     await runtime.aclose()
 
 

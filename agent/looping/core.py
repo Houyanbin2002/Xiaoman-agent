@@ -293,6 +293,7 @@ class AgentLoop:
             memory_window=history_limit,
             context_compaction_config=config.context_compaction,
             prompt_cache_config=config.prompt_cache,
+            execution_guard_config=config.execution_guard,
             context=self._context,
             session_manager=self.session_manager,
             event_bus=self._event_bus,
