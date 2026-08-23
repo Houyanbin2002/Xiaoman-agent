@@ -32,5 +32,6 @@ class DashboardRuntimeServices:
     runtime_models: Any | None = None
     external_sources: Any | None = None
     personal_today: Any | None = None
+    conversation_styles: Any | None = None
     gateway_restart: Callable[[], None] | None = None
     gateway_instance_id: str = field(default_factory=lambda: uuid4().hex)

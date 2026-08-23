@@ -29,6 +29,8 @@ class TurnContext:
     channel: str | None
     chat_id: str | None
     retrieved_memory_block: str
+    conversation_style_id: str = ""
+    conversation_style_prompt: str = ""
 
 
 class PromptBlock(Protocol):
@@ -50,6 +52,7 @@ class PromptBlock(Protocol):
 #  15 BehaviorRulesPromptBlock → build_agent_behavior_rules_prompt(workspace)
 #                              来源：prompts/agent.py 里的固定行为规范
 #                              时机：仅代码或 workspace 变化时才变，最稳定
+#  18 ConversationStylePromptBlock → 用户在界面选择的低频表达策略
 #  20 SkillsCatalogPromptBlock → skills.build_skills_summary()
 #                              来源：skills/ 目录扫描结果、技能描述、依赖可用性
 #                              时机：技能文件或环境依赖变化时才变，低频
@@ -104,6 +107,22 @@ class BehaviorRulesPromptBlock:
 
     def cache_signature(self, ctx: TurnContext) -> str | None:
         return str(ctx.workspace.expanduser().resolve())
+
+
+class ConversationStylePromptBlock:
+    priority = 18
+    label = "conversation_style"
+    is_static = True
+
+    def render(
+        self, ctx: TurnContext, cached_signature: str | None = None
+    ) -> str | None:
+        content = str(ctx.conversation_style_prompt or "").strip()
+        return content or None
+
+    def cache_signature(self, ctx: TurnContext) -> str | None:
+        style_id = str(ctx.conversation_style_id or "").strip()
+        return style_id or None
 
 
 class SkillsCatalogPromptBlock:

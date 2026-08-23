@@ -107,3 +107,38 @@ def test_resume_preserves_budgets_but_resets_wall_clock() -> None:
     assert resumed["tool_calls_total"] == 1
     assert resumed["recent_rounds"] == state["recent_rounds"]
     assert resumed["started_at"] >= previous_started_at
+
+
+def test_blocking_shell_uses_dedicated_long_running_timeout() -> None:
+    guard = ExecutionGuard(
+        ExecutionGuardConfig(
+            tool_timeout_seconds=300,
+            side_effect_tool_timeout_seconds=300,
+            blocking_tool_timeout_seconds=3600,
+        )
+    )
+
+    assert (
+        guard.tool_timeout(
+            "external-side-effect",
+            tool_name="shell",
+            arguments={"auto_promote": False},
+        )
+        == 3600
+    )
+    assert (
+        guard.tool_timeout(
+            "external-side-effect",
+            tool_name="shell",
+            arguments={"auto_promote": False, "timeout": 30},
+        )
+        == 300
+    )
+    assert (
+        guard.tool_timeout(
+            "external-side-effect",
+            tool_name="shell",
+            arguments={"auto_promote": True},
+        )
+        == 300
+    )

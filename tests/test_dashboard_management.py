@@ -39,6 +39,7 @@ from core.attention.events.models import (
     EntityState,
     EventStatus,
 )
+from bus.events import OutboundMessage
 from core.workflow.models import StepKind, StepSpec
 from infra.persistence.memory_governance_store import MemoryGovernanceStore
 from infra.persistence.personal_store import PersonalStore
@@ -523,6 +524,36 @@ def test_control_overview_and_models_hide_secrets(tmp_path: Path) -> None:
     _close_services(services)
 
 
+def test_conversation_style_can_be_listed_and_changed_without_restart(
+    tmp_path: Path,
+) -> None:
+    app = FastAPI()
+    services = _services(tmp_path)
+    register_dashboard_management(app, services)
+
+    with TestClient(app) as client:
+        before = client.get("/api/dashboard/control/conversation-styles")
+        changed = client.patch(
+            "/api/dashboard/control/conversation-styles",
+            json={"style_id": "warm"},
+        )
+        rejected = client.patch(
+            "/api/dashboard/control/conversation-styles",
+            json={"style_id": "unknown"},
+        )
+
+    assert before.status_code == 200
+    assert before.json()["active_style"] == "balanced"
+    assert len(before.json()["styles"]) == 6
+    assert changed.status_code == 200
+    assert changed.json()["active_style"] == "warm"
+    assert changed.json()["applies_from"] == "next_reply"
+    assert rejected.status_code == 422
+    assert services.conversation_styles.active_id == "warm"
+    assert (tmp_path / "conversation_style.json").exists()
+    _close_services(services)
+
+
 def test_weixin_qr_login_saves_token_to_system_keyring(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -722,6 +753,48 @@ def test_dashboard_chat_websocket_round_trip(tmp_path: Path) -> None:
                 "content": "小满收到：你好",
                 "thinking": "",
             }
+    _close_services(services)
+
+
+def test_dashboard_generated_artifact_is_downloadable(tmp_path: Path) -> None:
+    artifact = tmp_path / "reports" / "assistant-report.pdf"
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"%PDF-generated")
+
+    class _ArtifactAgentLoop:
+        active_turn_states: dict[str, Any] = {}
+
+        async def process_direct_outbound(
+            self,
+            _content: str,
+            **_kwargs: Any,
+        ) -> OutboundMessage:
+            return OutboundMessage(
+                channel="dashboard",
+                chat_id="artifact-chat",
+                content="报告已生成并附在本条消息中。",
+                media=[str(artifact)],
+            )
+
+    app = FastAPI()
+    services = _services(tmp_path)
+    services.agent_loop = _ArtifactAgentLoop()
+    register_dashboard_management(app, services)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/api/dashboard/chat/artifact-chat"
+        ) as websocket:
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json({"content": "制作报告并发送给我"})
+            assert websocket.receive_json()["type"] == "status"
+            final = websocket.receive_json()
+            assert final["type"] == "final"
+            assert final["artifacts"][0]["name"] == "assistant-report.pdf"
+            response = client.get(final["artifacts"][0]["url"])
+            assert response.status_code == 200
+            assert response.content == b"%PDF-generated"
+
     _close_services(services)
 
 

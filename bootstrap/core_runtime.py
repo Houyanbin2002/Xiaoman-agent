@@ -182,6 +182,7 @@ class CoreRuntime:
                 default_after_reasoning_modules(
                     self.event_bus,
                     cast(Any, getattr(pipeline, "_session", None)),
+                    workspace=getattr(context, "workspace", None),
                     plugin_modules=cast(Any, after_reasoning_modules),
                 ),
             ),

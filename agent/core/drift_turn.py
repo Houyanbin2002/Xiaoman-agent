@@ -60,6 +60,7 @@ _TOOL_CONSTRAINT_RETRY_LIMIT = 2
 
 # ── Pipeline 依赖容器 ─────────────────────────────────────────────────────
 
+
 @dataclass
 class DriftTurnPipelineDeps:
     store: DriftStateStore
@@ -85,6 +86,7 @@ class DriftTurnPipelineDeps:
 # │     └─ 4. Finish ── _finish
 # │        └─ 记录退出状态日志
 # └─ done
+
 
 class DriftTurnPipeline:
 
@@ -132,7 +134,8 @@ class DriftTurnPipeline:
         shared = self._tool_deps.shared_tools
         connected_servers = shared.get_mcp_server_names() if shared else set()
         skills = [
-            s for s in skills
+            s
+            for s in skills
             if not s.requires_mcp or set(s.requires_mcp) <= connected_servers
         ]
         if not skills:
@@ -216,15 +219,15 @@ class DriftTurnPipeline:
                 allowed_tool_names = set(_BEFORE_SELECT_TOOLS)
                 tool_choice = "required"
                 schemas = [
-                    s for s in schemas
-                    if s["function"]["name"] in allowed_tool_names
+                    s for s in schemas if s["function"]["name"] in allowed_tool_names
                 ]
-                logger.info("[drift] selected_skill missing, forcing select_skill or idle_drift")
+                logger.info(
+                    "[drift] selected_skill missing, forcing select_skill or idle_drift"
+                )
             elif ctx.drift_message_sent:
                 allowed_tool_names = set(_AFTER_SEND_TOOLS)
                 schemas = [
-                    s for s in schemas
-                    if s["function"]["name"] in allowed_tool_names
+                    s for s in schemas if s["function"]["name"] in allowed_tool_names
                 ]
                 logger.info(
                     "[drift] message_push already used, "
@@ -236,7 +239,9 @@ class DriftTurnPipeline:
                 if "disable_thinking" in inspect.signature(llm_fn).parameters:
                     tool_call = await asyncio.wait_for(
                         cast(Any, llm_fn)(
-                            messages, schemas, tool_choice,
+                            messages,
+                            schemas,
+                            tool_choice,
                             disable_thinking=True,
                         ),
                         timeout=guard.config.model_call_timeout_seconds,
@@ -279,7 +284,9 @@ class DriftTurnPipeline:
                     f"当前只允许调用：{allowed_text}。"
                 )
                 if "finish_drift" in allowed_tool_names:
-                    output += "请调用 finish_drift 保存 completed、paused 或 waiting 状态。"
+                    output += (
+                        "请调用 finish_drift 保存 completed、paused 或 waiting 状态。"
+                    )
                 logger.warning("[drift] tool constraint rejected tool=%s", tool_name)
                 self._store.append_step(
                     step_index=steps,
@@ -308,7 +315,9 @@ class DriftTurnPipeline:
                     if "finish_drift" in allowed_tool_names:
                         await self._wrap_up(ctx, llm_fn, tools, messages)
                     else:
-                        logger.warning("[drift] selection rejected repeatedly, aborting drift")
+                        logger.warning(
+                            "[drift] selection rejected repeatedly, aborting drift"
+                        )
                     return
                 continue
 
@@ -344,7 +353,11 @@ class DriftTurnPipeline:
                     arguments=tool_args,
                     source="proactive",
                     session_key=ctx.session_key,
-                    timeout_seconds=guard.tool_timeout(tools.get_risk(tool_name)),
+                    timeout_seconds=guard.tool_timeout(
+                        tools.get_risk(tool_name),
+                        tool_name=tool_name,
+                        arguments=tool_args,
+                    ),
                 ),
                 tools.execute,
             )
@@ -360,7 +373,9 @@ class DriftTurnPipeline:
 
             # 3.4 错误处理。
             if result.status == "error":
-                logger.warning("[drift] tool executor error at step=%d: %s", steps, result_text)
+                logger.warning(
+                    "[drift] tool executor error at step=%d: %s", steps, result_text
+                )
                 self._store.append_step(
                     step_index=steps,
                     tool_name=tool_name,
@@ -488,11 +503,15 @@ class DriftTurnPipeline:
                     )
             except TimeoutError:
                 rejection = "收尾模型调用超时"
-                logger.warning("[drift] wrap-up model call timed out attempt=%d", attempt)
+                logger.warning(
+                    "[drift] wrap-up model call timed out attempt=%d", attempt
+                )
                 continue
             if tool_call is None:
                 rejection = "没有返回工具调用"
-                logger.warning("[drift] wrap-up llm returned no tool call attempt=%d", attempt)
+                logger.warning(
+                    "[drift] wrap-up llm returned no tool call attempt=%d", attempt
+                )
                 continue
 
             ctx.record_llm_cache(
@@ -641,9 +660,8 @@ class DriftTurnPipeline:
                 tool_count = len(shared.get_tool_names_by_source("mcp", srv))
                 mcp_lines.append(f"- {srv}（{tool_count} 个工具）")
             mcp_block = (
-                "【可挂载的外部能力】\n"
-                + "\n".join(mcp_lines) + "\n"
-                "使用 mount_server(server=\"名称\") 挂载后即可调用其中的工具。"
+                "【可挂载的外部能力】\n" + "\n".join(mcp_lines) + "\n"
+                '使用 mount_server(server="名称") 挂载后即可调用其中的工具。'
             )
 
         sections = [
@@ -707,7 +725,9 @@ class DriftTurnPipeline:
             continuum = self._store.load_skill_continuum(skill.name)
             briefing = str(continuum.get("last_briefing") or "").strip()[:120]
             scratchpad = str(continuum.get("scratchpad") or "").strip()[:160]
-            finished_at = str(continuum.get("updated_at") or continuum.get("last_run_at") or "").strip()
+            finished_at = str(
+                continuum.get("updated_at") or continuum.get("last_run_at") or ""
+            ).strip()
             cursor = continuum.get("cursor")
             cursor_text = ""
             if isinstance(cursor, dict) and cursor:
@@ -802,4 +822,6 @@ class DriftTurnPipeline:
                 ],
             }
         )
-        messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
+        messages.append(
+            {"role": "tool", "tool_call_id": tool_call_id, "content": result}
+        )

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import mimetypes
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from bus.events import OutboundMessage
@@ -54,18 +56,22 @@ class PushToolOutboundPort:
             return False
         try:
             result = ""
-            if message or media:
+            if message:
                 result = await self._push.execute(
                     channel=channel,
                     chat_id=chat_id,
                     message=message,
-                    image=media[0] if media else None,
                 )
-            for image in media[1:]:
+            for item in media:
+                mime_type = mimetypes.guess_type(Path(item).name)[0] or ""
                 result = await self._push.execute(
                     channel=channel,
                     chat_id=chat_id,
-                    image=image,
+                    **(
+                        {"image": item}
+                        if mime_type.startswith("image/")
+                        else {"file": item}
+                    ),
                 )
         except Exception:
             return False

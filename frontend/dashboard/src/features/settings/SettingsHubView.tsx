@@ -1,6 +1,7 @@
 import React from "react";
 import { BellRing, Cable, Cpu, Radio, Settings2 } from "lucide-react";
 import type { ViewId } from "../../shared/types";
+import { ConversationStyleSettings } from "./ConversationStyleSettings";
 
 interface SettingsHubViewProps { navigate: (view: ViewId) => void; }
 
@@ -15,6 +16,7 @@ const settingsGroups: { title: string; description: string; target: ViewId; icon
 export function SettingsHubView({ navigate }: SettingsHubViewProps): React.ReactElement {
   return <div className="settings-hub">
     <header className="settings-hub-head"><h1>设置与扩展</h1><p>按你想完成的事情管理小满；技术细节只在需要时展开。</p></header>
+    <ConversationStyleSettings />
     <div className="settings-hub-grid">{settingsGroups.map((item) => {
       const Icon = item.icon;
       return <button type="button" key={item.target} onClick={() => navigate(item.target)}><span><Icon size={21} /></span><div><strong>{item.title}</strong><p>{item.description}</p></div><b aria-hidden="true">›</b></button>;

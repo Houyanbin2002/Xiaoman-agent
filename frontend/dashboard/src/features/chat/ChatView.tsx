@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, FileText, Hand, LoaderCircle, Maximize2, Plus, Send, ShieldAlert, ShieldCheck, Square, SquareTerminal, Upload, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, Download, FileText, Hand, LoaderCircle, Maximize2, Plus, Send, ShieldAlert, ShieldCheck, Square, SquareTerminal, Upload, X } from "lucide-react";
 import { api } from "../../api";
 import { MarkdownView } from "../../MarkdownView";
 import type { MessageRow, PageResult } from "../../types";
@@ -43,6 +43,8 @@ interface ChatEvent {
   description?: string;
   preview?: string;
   attachments?: UploadedAttachment[];
+  artifacts?: UploadedAttachment[];
+  artifact?: UploadedAttachment;
 }
 
 interface UploadedAttachment {
@@ -51,6 +53,7 @@ interface UploadedAttachment {
   size: number;
   mime_type: string;
   parsed?: boolean;
+  url?: string;
 }
 
 const ATTACHMENT_ACCEPT = ".pdf,.docx,.xlsx,.xls,.pptx,.csv,.tsv,.txt,.md,.json,.xml,.html,.htm,.epub,.png,.jpg,.jpeg,.webp,.gif";
@@ -350,6 +353,7 @@ export function ChatView(props: {
         setActiveRun(run);
         if (isPermissionMode(payload.permission_mode)) setPermissionMode(payload.permission_mode);
         ensureRunMessages(runId, payload.prompt, payload.content ?? "", payload.attachments ?? []);
+        if (payload.artifacts?.length) updateAssistant(runId, (message) => ({ ...message, attachments: payload.artifacts }));
         onRunState?.(chatId, true, payload.prompt);
       } else if (payload.type === "content_delta" && runId && payload.delta) {
         updateAssistant(runId, (message) => ({ ...message, content: message.content + payload.delta }));
@@ -371,7 +375,7 @@ export function ChatView(props: {
         setApprovalResponding(false);
         setActiveRun((current) => current?.status === "approval" ? { ...current, status: "thinking" } : current);
       } else if (payload.type === "final" && runId) {
-        updateAssistant(runId, (message) => ({ ...message, content: payload.content ?? message.content, thinking: payload.thinking, pending: false }));
+        updateAssistant(runId, (message) => ({ ...message, content: payload.content ?? message.content, thinking: payload.thinking, pending: false, attachments: payload.artifacts ?? message.attachments }));
         setActiveRun(null);
         setPendingApproval(null);
         setApprovalResponding(false);
@@ -384,6 +388,8 @@ export function ChatView(props: {
         setApprovalResponding(false);
         onRunState?.(chatId, false);
         onActivity?.();
+      } else if (payload.type === "artifact" && runId && payload.artifact) {
+        updateAssistant(runId, (message) => ({ ...message, attachments: [...(message.attachments ?? []), payload.artifact!] }));
       } else if (payload.type === "error") {
         if (runId) {
           updateAssistant(runId, (message) => ({ ...message, content: message.content || payload.message || "请求失败", pending: false, state: "error" }));
@@ -400,7 +406,7 @@ export function ChatView(props: {
           onRunState?.(chatId, false);
         }
       } else if (payload.type === "push" && payload.content) {
-        setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: payload.content ?? "", timestamp: clockTime() }]);
+        setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: payload.content ?? "", timestamp: clockTime(), attachments: payload.artifacts }]);
       }
     };
   }, [chatId, ensureRunMessages, onActivity, onRunState, updateAssistant]);
@@ -577,6 +583,7 @@ export function ChatView(props: {
             <div className={`message-wrap${expandedId === message.id ? " expanded" : ""}`}>
               <div className={`message-surface${message.pending ? " pending" : ""}`}>
                 {message.role === "user" && message.attachments?.length ? <div className="message-attachments">{message.attachments.map((attachment, index) => <span key={`${attachment.name}:${index}`}><FileText size={14} /><span>{attachment.name}</span></span>)}</div> : null}
+                {message.role === "assistant" && message.attachments?.length ? <div className="message-attachments assistant-artifacts">{message.attachments.map((attachment, index) => attachment.url ? <a key={`${attachment.name}:${index}`} href={attachment.url} download={attachment.name}><FileText size={14} /><span>{attachment.name}</span><Download size={13} /></a> : <span key={`${attachment.name}:${index}`}><FileText size={14} /><span>{attachment.name}</span></span>)}</div> : null}
                 {message.role === "assistant" && message.pending && activeRun?.id === message.id.split(":")[1] ? <RunProgress run={activeRun} onStop={stop} /> : null}
                 {message.role === "assistant" && message.pending && activeRun?.id === message.id.split(":")[1] && pendingApproval ? <ApprovalCard approval={pendingApproval} responding={approvalResponding} onRespond={respondToApproval} /> : null}
                 {message.content ? <div className="answer-content"><MarkdownView content={message.content} /></div> : null}

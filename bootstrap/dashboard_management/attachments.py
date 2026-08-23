@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import re
 import shutil
 from collections.abc import AsyncIterable
@@ -8,6 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
+from urllib.parse import quote
 
 
 SUPPORTED_ATTACHMENT_EXTENSIONS = frozenset(
@@ -60,6 +62,10 @@ class DashboardAttachment:
             "size": self.size,
             "mime_type": self.mime_type,
             "parsed": self.content_path is not None and self.content_path != self.path,
+            "url": (
+                f"/api/dashboard/chat/{quote(self.chat_id, safe='')}/attachments/"
+                f"{self.id}/download"
+            ),
         }
 
 
@@ -121,6 +127,54 @@ class DashboardAttachmentStore:
         )
         with self._lock:
             self._records[attachment_id] = record
+        return record
+
+    def import_file(
+        self,
+        *,
+        chat_id: str,
+        source: str | Path,
+        filename: str | None = None,
+    ) -> DashboardAttachment:
+        """Copy an Agent-generated artifact into the dashboard-owned store."""
+
+        path = Path(source).expanduser().resolve()
+        if not path.is_file():
+            raise AttachmentError("生成文件不存在")
+        size = path.stat().st_size
+        if size <= 0:
+            raise AttachmentError("不能发送空文件")
+        if size > MAX_ATTACHMENT_BYTES:
+            raise AttachmentError("文件超过 128 MB 上限", status_code=413)
+
+        safe_name = _safe_filename(filename or path.name)
+        attachment_id = uuid4().hex
+        chat_dir = self.root / _chat_directory(chat_id) / attachment_id
+        chat_dir.mkdir(parents=True, exist_ok=False)
+        final_path = chat_dir / safe_name
+        try:
+            shutil.copy2(path, final_path)
+        except Exception:
+            shutil.rmtree(chat_dir, ignore_errors=True)
+            raise
+        mime_type = mimetypes.guess_type(final_path.name)[0] or "application/octet-stream"
+        record = DashboardAttachment(
+            id=attachment_id,
+            chat_id=chat_id,
+            name=safe_name,
+            path=final_path,
+            size=size,
+            mime_type=mime_type,
+        )
+        with self._lock:
+            self._records[attachment_id] = record
+        return record
+
+    def get(self, chat_id: str, attachment_id: str) -> DashboardAttachment:
+        with self._lock:
+            record = self._records.get(attachment_id)
+        if record is None or record.chat_id != chat_id or not record.path.is_file():
+            raise AttachmentError("附件已失效，请重新生成", status_code=404)
         return record
 
     def set_content_path(

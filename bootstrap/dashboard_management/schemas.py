@@ -30,6 +30,10 @@ class ChannelUpdatePayload(BaseModel):
     allow_from: list[str] = Field(default_factory=list)
 
 
+class ConversationStyleUpdatePayload(BaseModel):
+    style_id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
+
+
 class McpCreatePayload(BaseModel):
     name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     transport: str = Field(default="stdio", pattern=r"^(stdio|streamable_http|sse)$")

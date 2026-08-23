@@ -884,7 +884,9 @@ class LangGraphAgentExecutor:
                 tool_batch=batch,
                 tool_batch_index=index,
                 timeout_seconds=self._host._execution_guard.tool_timeout(
-                    self._host._tools.get_risk(call.name)
+                    self._host._tools.get_risk(call.name),
+                    tool_name=call.name,
+                    arguments=call.arguments,
                 ),
             ),
             _execute_tool,

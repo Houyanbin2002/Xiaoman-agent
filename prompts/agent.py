@@ -212,7 +212,21 @@ def build_skills_catalog_prompt(skills_summary: str) -> str:
 
 
 def build_current_session_prompt(*, channel: str, chat_id: str) -> str:
-    return f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
+    channel_label = {
+        "dashboard": "网页 Dashboard 当前聊天",
+        "qqbot": "QQ 当前聊天",
+        "telegram": "Telegram 当前聊天",
+        "weixin": "微信当前聊天",
+        "wecom": "企业微信当前聊天",
+        "cli": "本机命令行当前会话",
+    }.get(channel, channel)
+    return f"""\n\n## Current Session / 当前真实交互会话（硬性路由）
+- 当前渠道：{channel}（{channel_label}）
+- 当前会话 ID：{chat_id}
+- 本区块由系统按本轮入口生成，优先级高于历史对话里出现过的任何渠道信息。不得因为旧消息提到 QQ、Telegram 或其他渠道，就把当前渠道改成它们。
+- 回复和交付都必须返回当前渠道、当前会话；不得要求用户去另一个渠道或自行打开本机目录。
+- 用户要求制作并发送文件时，完成文件后调用 `message_push`，固定使用 `channel={channel}`、`chat_id={chat_id}`，只传 `file=实际本地路径`；正文由本轮最终回复发送，避免重复消息。
+- 只有 `message_push` 返回真实失败后，才能说明交付失败并给出该错误；不得凭记忆声称当前渠道不支持文件。"""
 
 
 def build_telegram_rendering_prompt() -> str:

@@ -16,7 +16,6 @@ from typing import Any, Callable, Mapping, Sequence
 
 from agent.tools.base import ToolResult
 
-
 _POLLING_TOOLS = frozenset({"process_output", "process_stop"})
 _VOLATILE_ARGUMENTS = frozenset({"description", "_commit_role"})
 
@@ -31,21 +30,22 @@ class ExecutionGuardConfig:
     same_signature_stop: int = 3
     no_progress_rounds: int = 4
     max_tool_calls: int = 12
-    soft_timeout_seconds: float = 90.0
-    hard_timeout_seconds: float = 150.0
-    model_call_timeout_seconds: float = 90.0
-    tool_timeout_seconds: float = 45.0
-    side_effect_tool_timeout_seconds: float = 30.0
+    soft_timeout_seconds: float = 600.0
+    hard_timeout_seconds: float = 3900.0
+    model_call_timeout_seconds: float = 180.0
+    tool_timeout_seconds: float = 300.0
+    side_effect_tool_timeout_seconds: float = 300.0
+    blocking_tool_timeout_seconds: float = 3600.0
     context_soft_tokens: int = 120_000
     context_hard_tokens: int = 160_000
     max_tool_result_chars: int = 12_000
     max_tool_round_chars: int = 24_000
     max_turn_tool_result_chars: int = 60_000
     subagent_max_iterations: int = 10
-    subagent_timeout_seconds: float = 90.0
+    subagent_timeout_seconds: float = 3900.0
     subagent_result_chars: int = 12_000
     workflow_max_concurrency: int = 2
-    workflow_step_timeout_seconds: float = 180.0
+    workflow_step_timeout_seconds: float = 4200.0
     workflow_max_subagent_steps: int = 4
 
     def normalized(self) -> "ExecutionGuardConfig":
@@ -68,12 +68,15 @@ class ExecutionGuardConfig:
             max_tool_calls=max(1, int(self.max_tool_calls)),
             soft_timeout_seconds=soft_timeout,
             hard_timeout_seconds=hard_timeout,
-            model_call_timeout_seconds=max(
-                5.0, float(self.model_call_timeout_seconds)
-            ),
+            model_call_timeout_seconds=max(5.0, float(self.model_call_timeout_seconds)),
             tool_timeout_seconds=max(1.0, float(self.tool_timeout_seconds)),
             side_effect_tool_timeout_seconds=max(
                 1.0, float(self.side_effect_tool_timeout_seconds)
+            ),
+            blocking_tool_timeout_seconds=max(
+                float(self.tool_timeout_seconds),
+                float(self.side_effect_tool_timeout_seconds),
+                float(self.blocking_tool_timeout_seconds),
             ),
             context_soft_tokens=context_soft,
             context_hard_tokens=context_hard,
@@ -81,19 +84,13 @@ class ExecutionGuardConfig:
             max_tool_round_chars=round_chars,
             max_turn_tool_result_chars=turn_chars,
             subagent_max_iterations=max(1, int(self.subagent_max_iterations)),
-            subagent_timeout_seconds=max(
-                5.0, float(self.subagent_timeout_seconds)
-            ),
+            subagent_timeout_seconds=max(5.0, float(self.subagent_timeout_seconds)),
             subagent_result_chars=max(1_000, int(self.subagent_result_chars)),
-            workflow_max_concurrency=max(
-                1, int(self.workflow_max_concurrency)
-            ),
+            workflow_max_concurrency=max(1, int(self.workflow_max_concurrency)),
             workflow_step_timeout_seconds=max(
                 10.0, float(self.workflow_step_timeout_seconds)
             ),
-            workflow_max_subagent_steps=max(
-                1, int(self.workflow_max_subagent_steps)
-            ),
+            workflow_max_subagent_steps=max(1, int(self.workflow_max_subagent_steps)),
         )
 
     def for_subagent(self) -> "ExecutionGuardConfig":
@@ -174,9 +171,8 @@ class ExecutionGuard:
             return GuardDecision(state, stop_reason="context_budget")
 
         hints: list[str] = []
-        if (
-            elapsed >= self.config.soft_timeout_seconds
-            and not state.get("soft_timeout_warned")
+        if elapsed >= self.config.soft_timeout_seconds and not state.get(
+            "soft_timeout_warned"
         ):
             state["soft_timeout_warned"] = True
             state["convergence_stage"] = max(
@@ -186,9 +182,8 @@ class ExecutionGuard:
                 "本轮已接近时间预算。停止扩展非必要步骤；已有证据足够时立即给出结论，"
                 "复杂剩余工作转为可恢复 Workflow。"
             )
-        if (
-            context_tokens >= self.config.context_soft_tokens
-            and not state.get("context_warned")
+        if context_tokens >= self.config.context_soft_tokens and not state.get(
+            "context_warned"
         ):
             state["context_warned"] = True
             state["convergence_stage"] = max(
@@ -211,7 +206,10 @@ class ExecutionGuard:
             return GuardDecision(state)
         if self._elapsed(state) >= self.config.hard_timeout_seconds:
             return GuardDecision(state, stop_reason="turn_timeout")
-        if int(state.get("tool_calls_total") or 0) + len(calls) > self.config.max_tool_calls:
+        if (
+            int(state.get("tool_calls_total") or 0) + len(calls)
+            > self.config.max_tool_calls
+        ):
             return GuardDecision(state, stop_reason="tool_budget")
 
         signature = tool_batch_signature(calls)
@@ -269,12 +267,10 @@ class ExecutionGuard:
         recent.append(record)
         recent = recent[-self.config.window_rounds :]
         state["recent_rounds"] = recent
-        state["tool_calls_total"] = int(state.get("tool_calls_total") or 0) + len(
-            calls
+        state["tool_calls_total"] = int(state.get("tool_calls_total") or 0) + len(calls)
+        state["tool_result_chars"] = (
+            int(state.get("tool_result_chars") or 0) + result_chars
         )
-        state["tool_result_chars"] = int(
-            state.get("tool_result_chars") or 0
-        ) + result_chars
         state["no_progress_streak"] = no_progress_streak
 
         failure_counts = {
@@ -355,11 +351,37 @@ class ExecutionGuard:
             ),
         )
 
-    def tool_timeout(self, risk: str) -> float:
-        return (
+    def tool_timeout(
+        self,
+        risk: str,
+        *,
+        tool_name: str = "",
+        arguments: Mapping[str, Any] | None = None,
+    ) -> float:
+        base_timeout = (
             self.config.tool_timeout_seconds
             if risk == "read-only"
             else self.config.side_effect_tool_timeout_seconds
+        )
+        if tool_name != "shell" or not isinstance(arguments, Mapping):
+            return base_timeout
+        if arguments.get("auto_promote") is not False:
+            return base_timeout
+
+        # shell(auto_promote=false) is deliberately synchronous (for example
+        # codex-delegate).  Its own timeout must get a chance to return a
+        # structured result instead of being cancelled by the generic
+        # side-effect budget first.
+        raw_timeout = arguments.get("timeout")
+        if raw_timeout is None:
+            return self.config.blocking_tool_timeout_seconds
+        try:
+            requested = max(1.0, float(raw_timeout))
+        except (TypeError, ValueError):
+            return self.config.blocking_tool_timeout_seconds
+        return min(
+            self.config.blocking_tool_timeout_seconds,
+            max(base_timeout, requested + 5.0),
         )
 
     def _state(self, value: object) -> dict[str, Any]:
@@ -443,8 +465,10 @@ def _call_name(call: object) -> str:
 
 
 def _call_arguments(call: object) -> dict[str, Any]:
-    raw = call.get("arguments") if isinstance(call, Mapping) else getattr(
-        call, "arguments", {}
+    raw = (
+        call.get("arguments")
+        if isinstance(call, Mapping)
+        else getattr(call, "arguments", {})
     )
     return dict(raw) if isinstance(raw, Mapping) else {}
 

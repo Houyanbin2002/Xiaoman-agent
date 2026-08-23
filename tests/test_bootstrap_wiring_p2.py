@@ -43,7 +43,11 @@ def _dump_toml(data: dict, prefix: tuple[str, ...] = ()) -> list[str]:
     for key, value in data.items():
         if isinstance(value, dict):
             continue
-        if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+        if (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, dict) for item in value)
+        ):
             continue
         scalar_lines.append(f"{key} = {_toml_value(value)}")
 
@@ -56,7 +60,11 @@ def _dump_toml(data: dict, prefix: tuple[str, ...] = ()) -> list[str]:
     for key, value in data.items():
         if isinstance(value, dict):
             lines.extend(_dump_toml(value, prefix + (key,)))
-        elif isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+        elif (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, dict) for item in value)
+        ):
             for item in value:
                 lines.append(f"[[{'.'.join(prefix + (key,))}]]")
                 for item_key, item_value in item.items():
@@ -156,7 +164,9 @@ def test_config_load_ignores_wiring_memory_engine(tmp_path: Path):
     assert cfg.memory.engine == "akasha"
 
 
-def test_config_load_reads_embedding_and_ignores_private_memory_sections(tmp_path: Path):
+def test_config_load_reads_embedding_and_ignores_private_memory_sections(
+    tmp_path: Path,
+):
     cfg_path = tmp_path / "config.toml"
     _write_toml(
         cfg_path,
@@ -269,6 +279,7 @@ def test_config_load_reads_execution_guard_policy(tmp_path: Path):
                 "guard": {
                     "max_tool_calls": 9,
                     "tool_timeout_seconds": 33,
+                    "blocking_tool_timeout_seconds": 333,
                     "max_tool_result_chars": 6000,
                     "workflow_max_concurrency": 2,
                 },
@@ -280,6 +291,7 @@ def test_config_load_reads_execution_guard_policy(tmp_path: Path):
 
     assert cfg.execution_guard.max_tool_calls == 9
     assert cfg.execution_guard.tool_timeout_seconds == 33
+    assert cfg.execution_guard.blocking_tool_timeout_seconds == 333
     assert cfg.execution_guard.max_tool_result_chars == 6000
     assert cfg.execution_guard.workflow_max_concurrency == 2
 
@@ -332,7 +344,9 @@ def test_config_load_accepts_dev_model_alias(tmp_path: Path):
     assert cfg.dev_mode is True
 
 
-def test_config_load_skips_unfilled_channels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_config_load_skips_unfilled_channels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     cfg_path = tmp_path / "config.toml"
     _write_toml(
         cfg_path,
@@ -436,8 +450,7 @@ socket = "/tmp/toml-xiaoman.sock"
 
 [integrations.fitbit]
 enabled = true
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 
@@ -455,7 +468,9 @@ enabled = true
     assert cfg.fitbit.enabled is True
 
 
-def test_build_registered_tools_respects_toolset_order_and_subset(monkeypatch, tmp_path: Path):
+def test_build_registered_tools_respects_toolset_order_and_subset(
+    monkeypatch, tmp_path: Path
+):
     calls: list[str] = []
 
     class _MemoryProvider:
@@ -556,16 +571,16 @@ def test_build_loop_deps_uses_context_factory(monkeypatch, tmp_path: Path):
         event_bus=EventBus(),
         memory_runtime=cast(
             Any,
-                SimpleNamespace(
-                    engine=object(),
-                    profile=markdown_store,
-                    markdown=SimpleNamespace(
-                        store=markdown_store,
-                        maintenance=markdown_maintenance,
-                    ),
+            SimpleNamespace(
+                engine=object(),
+                profile=markdown_store,
+                markdown=SimpleNamespace(
+                    store=markdown_store,
+                    maintenance=markdown_maintenance,
                 ),
             ),
-        )
+        ),
+    )
 
     assert observed["name"] == "default"
     assert observed["workspace"] == tmp_path
@@ -666,9 +681,7 @@ async def test_wire_turn_lifecycle_registers_afterstep_progress_handler():
             tools_called=("noop",),
             partial_reply="部分回复",
             tools_used_so_far=("a", "b"),
-            tool_chain_partial=(
-                {"text": "tool", "calls": []},
-            ),
+            tool_chain_partial=({"text": "tool", "calls": []},),
             partial_thinking="思考",
             has_more=True,
         )

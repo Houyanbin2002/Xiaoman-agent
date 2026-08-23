@@ -341,6 +341,7 @@ class PassiveTurnPipeline:
             default_after_reasoning_modules(
                 self._bus,
                 self._session,
+                workspace=getattr(self._context, "workspace", None),
                 plugin_modules=cast("list[Any]", self._after_reasoning_plugin_modules),
             ),
             frame_factory=AfterReasoningFrame,

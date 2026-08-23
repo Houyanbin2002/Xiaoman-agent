@@ -31,6 +31,7 @@ from agent.config_models import TelegramChannelConfig
 from ..contracts import DashboardRuntimeServices
 from ..schemas import (
     ChannelUpdatePayload,
+    ConversationStyleUpdatePayload,
     MarketplaceInstallPayload,
     McpCreatePayload,
     ScheduleCreatePayload,
@@ -336,6 +337,24 @@ def register_system_routes(
             "items": [item.public() for item in items],
             "kind": kind,
             "query": search_query,
+        }
+
+    @app.get("/api/dashboard/control/conversation-styles")
+    def get_conversation_styles() -> dict[str, Any]:
+        return services.conversation_styles.snapshot()
+
+    @app.patch("/api/dashboard/control/conversation-styles")
+    def update_conversation_style(
+        payload: ConversationStyleUpdatePayload,
+    ) -> dict[str, Any]:
+        try:
+            selected = services.conversation_styles.set_active(payload.style_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            **services.conversation_styles.snapshot(),
+            "selected": selected.public(),
+            "applies_from": "next_reply",
         }
 
     @app.get("/api/dashboard/control/marketplace/items/{item_id:path}")

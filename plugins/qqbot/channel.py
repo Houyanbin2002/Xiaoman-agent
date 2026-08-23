@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import mimetypes
@@ -12,6 +13,7 @@ from bus.events import InboundMessage, OutboundMessage
 from infra.channels.base import MessageDeduper
 from infra.channels.contract import ChannelContext
 from infra.channels.session_identity import remember_channel_session
+from core.net.http import RequestBudget
 
 from .config import QQBotConfig, QQBotGroupRule
 from .message_format import build_message_body
@@ -24,6 +26,9 @@ _API_URL = "https://api.sgroup.qq.com"
 _SANDBOX_API_URL = "https://sandbox.api.sgroup.qq.com"
 _GROUP_AND_C2C_INTENT = 1 << 25
 _RECONNECT_MAX_SECONDS = 30.0
+_QQ_FILE_HARD_LIMIT = 200 * 1024 * 1024
+_QQ_MD5_PREFIX_BYTES = 10_002_432
+_REPLY_CONTEXT_SECONDS = 270.0
 
 
 class QQBotChannel:
@@ -44,6 +49,8 @@ class QQBotChannel:
         self._sequence: int | None = None
         self._session_id = ""
         self._last_message_id: dict[str, str] = {}
+        self._last_message_at: dict[str, float] = {}
+        self._reply_sequence: dict[str, int] = {}
         self._message_deduper = MessageDeduper(1000)
         self._outbound_bound = False
 
@@ -58,7 +65,11 @@ class QQBotChannel:
         if not self._outbound_bound:
             ctx.bus.subscribe_outbound(self.name, self._on_response)
             self._outbound_bound = True
-        ctx.push_tool.register_channel(self.name, text=self.send)
+        ctx.push_tool.register_channel(
+            self.name,
+            text=self.send,
+            file=self.send_file,
+        )
         self._stopping.clear()
         self._runner = asyncio.create_task(self._run(), name="channel:qqbot")
 
@@ -226,6 +237,8 @@ class QQBotChannel:
         if not content and not media:
             return
         self._last_message_id[chat_id] = message_id
+        self._last_message_at[chat_id] = time.monotonic()
+        self._reply_sequence[chat_id] = 0
         ctx = self._require_ctx()
         title = f"QQ 群聊 · {group_id[-8:]}" if is_group else f"QQ · {sender_id[-8:]}"
         await remember_channel_session(
@@ -258,6 +271,8 @@ class QQBotChannel:
             result = controller.request_interrupt(f"{self.name}:{chat_id}", sender_id, "/stop")
             text = result.message or ("已停止当前回复。" if result.status == "interrupted" else text)
         self._last_message_id[chat_id] = message_id
+        self._last_message_at[chat_id] = time.monotonic()
+        self._reply_sequence[chat_id] = 0
         await self.send(chat_id, text)
 
     def _group_rule(self, group_id: str) -> QQBotGroupRule | None:
@@ -302,17 +317,18 @@ class QQBotChannel:
     async def send(self, chat_id: str, message: str) -> None:
         token = await self._access_token()
         path = _message_path(chat_id)
-        reply_to = self._last_message_id.get(chat_id)
+        reply_to = self._reply_to(chat_id)
         if chat_id.startswith("group:") and not reply_to:
             group_id = chat_id.partition(":")[2]
             rule = self._group_rule(group_id)
             if rule is None or not rule.allow_proactive:
                 raise PermissionError("该 QQ 群未允许主动推送")
         for sequence, part in enumerate(_split_message(message), start=1):
+            message_sequence = self._next_reply_sequence(chat_id) if reply_to else sequence
             body = build_message_body(
                 part,
                 markdown=self._config.markdown_support,
-                sequence=sequence,
+                sequence=message_sequence,
                 reply_to=reply_to,
             )
             response, token = await self._post_message(path, body, token)
@@ -324,13 +340,181 @@ class QQBotChannel:
                 fallback = build_message_body(
                     part,
                     markdown=False,
-                    sequence=sequence,
+                    sequence=message_sequence,
                     reply_to=reply_to,
                 )
                 response, token = await self._post_message(path, fallback, token)
             response.raise_for_status()
+
+    async def send_file(
+        self,
+        chat_id: str,
+        file_path: str,
+        name: str | None = None,
+    ) -> None:
+        path = Path(file_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"文件不存在：{path}")
+        size = path.stat().st_size
+        if size <= 0:
+            raise ValueError("QQ 不支持发送空文件")
+        if size > _QQ_FILE_HARD_LIMIT:
+            raise ValueError("QQ 文件超过 200 MB 上限")
+
+        reply_to = self._reply_to(chat_id)
+        if chat_id.startswith("group:") and not reply_to:
+            group_id = chat_id.partition(":")[2]
+            rule = self._group_rule(group_id)
+            if rule is None or not rule.allow_proactive:
+                raise PermissionError("该 QQ 群未允许主动推送")
+        token = await self._access_token()
+        file_info, token = await self._upload_local_file(
+            chat_id,
+            path,
+            name=name or path.name,
+            token=token,
+        )
+        reply_to = self._reply_to(chat_id)
+        body: dict[str, Any] = {
+            "msg_type": 7,
+            "media": {"file_info": file_info},
+            "msg_seq": self._next_reply_sequence(chat_id) if reply_to else 1,
+        }
         if reply_to:
-            self._last_message_id.pop(chat_id, None)
+            body["msg_id"] = reply_to
+        response, _ = await self._post_message(
+            _message_path(chat_id),
+            body,
+            token,
+        )
+        response.raise_for_status()
+
+    async def _upload_local_file(
+        self,
+        chat_id: str,
+        path: Path,
+        *,
+        name: str,
+        token: str,
+    ) -> tuple[str, str]:
+        digest_md5 = hashlib.md5()
+        digest_sha1 = hashlib.sha1()
+        digest_prefix = hashlib.md5()
+        prefix_remaining = _QQ_MD5_PREFIX_BYTES
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest_md5.update(chunk)
+                digest_sha1.update(chunk)
+                if prefix_remaining > 0:
+                    prefix = chunk[:prefix_remaining]
+                    digest_prefix.update(prefix)
+                    prefix_remaining -= len(prefix)
+
+        media_base = _media_base_path(chat_id)
+        prepare, token = await self._post_api_json(
+            f"{media_base}/upload_prepare",
+            {
+                "file_type": _qq_file_type(path),
+                "file_size": str(path.stat().st_size),
+                "file_name": name,
+                "md5": digest_md5.hexdigest(),
+                "sha1": digest_sha1.hexdigest(),
+                "md5_10m": digest_prefix.hexdigest(),
+            },
+            token,
+            timeout_s=30,
+        )
+        upload_id = str(prepare.get("upload_id") or "")
+        parts = prepare.get("parts")
+        if not upload_id or not isinstance(parts, list) or not parts:
+            raise RuntimeError("QQ 未返回有效的文件分片上传信息")
+
+        requester = self._require_ctx().http_resources.external_default
+        with path.open("rb") as source:
+            for raw_part in sorted(
+                (part for part in parts if isinstance(part, dict)),
+                key=lambda part: int(part.get("index") or 0),
+            ):
+                index = int(raw_part.get("index") or 0)
+                block_size = int(
+                    raw_part.get("block_size")
+                    or prepare.get("block_size")
+                    or 5 * 1024 * 1024
+                )
+                presigned_url = str(raw_part.get("presigned_url") or "")
+                if block_size <= 0 or not presigned_url.startswith(("http://", "https://")):
+                    raise RuntimeError(f"QQ 第 {index} 个文件分片信息无效")
+                chunk = source.read(block_size)
+                if not chunk:
+                    raise RuntimeError(f"QQ 第 {index} 个文件分片为空")
+                uploaded = await requester.request(
+                    "PUT",
+                    presigned_url,
+                    content=chunk,
+                    timeout_s=300,
+                    budget=RequestBudget(total_timeout_s=330),
+                )
+                uploaded.raise_for_status()
+                _, token = await self._post_api_json(
+                    f"{media_base}/upload_part_finish",
+                    {
+                        "upload_id": upload_id,
+                        "part_index": index,
+                        "block_size": str(len(chunk)),
+                        "md5": hashlib.md5(chunk).hexdigest(),
+                    },
+                    token,
+                    timeout_s=30,
+                )
+            if source.read(1):
+                raise RuntimeError("QQ 返回的文件分片容量不足")
+
+        merged, token = await self._post_api_json(
+            f"{media_base}/files",
+            {
+                "file_type": _qq_file_type(path),
+                "srv_send_msg": False,
+                "file_name": name,
+                "upload_id": upload_id,
+            },
+            token,
+            timeout_s=60,
+        )
+        file_info = str(merged.get("file_info") or "")
+        if not file_info:
+            raise RuntimeError("QQ 文件合并成功但未返回 file_info")
+        return file_info, token
+
+    async def _post_api_json(
+        self,
+        path: str,
+        body: dict[str, Any],
+        token: str,
+        *,
+        timeout_s: float,
+    ) -> tuple[dict[str, Any], str]:
+        requester = self._require_ctx().http_resources.external_default
+        response = await requester.post(
+            f"{self._api_url}{path}",
+            headers={"Authorization": f"QQBot {token}"},
+            json=body,
+            timeout_s=timeout_s,
+            budget=RequestBudget(total_timeout_s=max(45, timeout_s + 15)),
+        )
+        if response.status_code == 401:
+            token = await self._access_token(force=True)
+            response = await requester.post(
+                f"{self._api_url}{path}",
+                headers={"Authorization": f"QQBot {token}"},
+                json=body,
+                timeout_s=timeout_s,
+                budget=RequestBudget(total_timeout_s=max(45, timeout_s + 15)),
+            )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("QQ 返回了无法识别的文件上传结果")
+        return cast(dict[str, Any], payload), token
 
     async def _post_message(
         self,
@@ -355,7 +539,25 @@ class QQBotChannel:
         return response, token
 
     async def _on_response(self, message: OutboundMessage) -> None:
-        await self.send(message.chat_id, message.content)
+        if str(message.content or "").strip():
+            await self.send(message.chat_id, message.content)
+        for path in message.media:
+            await self.send_file(message.chat_id, path)
+
+    def _reply_to(self, chat_id: str) -> str | None:
+        message_id = self._last_message_id.get(chat_id)
+        received_at = self._last_message_at.get(chat_id, 0.0)
+        if message_id and time.monotonic() - received_at <= _REPLY_CONTEXT_SECONDS:
+            return message_id
+        self._last_message_id.pop(chat_id, None)
+        self._last_message_at.pop(chat_id, None)
+        self._reply_sequence.pop(chat_id, None)
+        return None
+
+    def _next_reply_sequence(self, chat_id: str) -> int:
+        sequence = self._reply_sequence.get(chat_id, 0) + 1
+        self._reply_sequence[chat_id] = sequence
+        return sequence
 
     def _require_ctx(self) -> ChannelContext:
         if self._ctx is None:
@@ -372,6 +574,28 @@ def _message_path(chat_id: str) -> str:
     if kind == "group":
         return f"/v2/groups/{target}/messages"
     raise ValueError("QQBot chat_id 仅支持 c2c 或 group")
+
+
+def _media_base_path(chat_id: str) -> str:
+    kind, separator, target = chat_id.partition(":")
+    if not separator or not target:
+        raise ValueError("QQBot chat_id 必须是 c2c:OPENID 或 group:GROUP_OPENID")
+    if kind == "c2c":
+        return f"/v2/users/{target}"
+    if kind == "group":
+        return f"/v2/groups/{target}"
+    raise ValueError("QQBot chat_id 仅支持 c2c 或 group")
+
+
+def _qq_file_type(path: Path) -> int:
+    suffix = path.suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg"}:
+        return 1
+    if suffix == ".mp4":
+        return 2
+    if suffix == ".silk":
+        return 3
+    return 4
 
 
 def _split_message(text: str, limit: int = 1800) -> list[str]:

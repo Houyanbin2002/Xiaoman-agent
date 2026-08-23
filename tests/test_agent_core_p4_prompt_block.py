@@ -6,6 +6,7 @@ from pathlib import Path
 from agent.core.prompt_block import (
     ActiveSkillsPromptBlock,
     BehaviorRulesPromptBlock,
+    ConversationStylePromptBlock,
     IdentityPromptBlock,
     LongTermMemoryPromptBlock,
     MemoryBlockPromptBlock,
@@ -59,7 +60,10 @@ def test_system_prompt_builder_uses_prompt_blocks_and_static_cache(tmp_path: Pat
     second = builder.build(ctx)
 
     assert first.system_prompt == "identity\n\n---\n\nretrieved"
-    assert [item.name for item in first.system_sections] == ["identity", "retrieved_memory"]
+    assert [item.name for item in first.system_sections] == [
+        "identity",
+        "retrieved_memory",
+    ]
     assert second.debug_breakdown[0].cache_hit is True
 
 
@@ -97,6 +101,7 @@ def test_prompt_block_priorities_leave_spacing_for_future_inserts():
     priorities = [
         (IdentityPromptBlock.label, IdentityPromptBlock.priority),
         (BehaviorRulesPromptBlock.label, BehaviorRulesPromptBlock.priority),
+        (ConversationStylePromptBlock.label, ConversationStylePromptBlock.priority),
         (SkillsCatalogPromptBlock.label, SkillsCatalogPromptBlock.priority),
         (SelfModelPromptBlock.label, SelfModelPromptBlock.priority),
         (LongTermMemoryPromptBlock.label, LongTermMemoryPromptBlock.priority),
@@ -109,6 +114,7 @@ def test_prompt_block_priorities_leave_spacing_for_future_inserts():
     assert priorities == [
         ("identity", 10),
         ("behavior_rules", 15),
+        ("conversation_style", 18),
         ("skills_catalog", 20),
         ("self_model", 30),
         ("long_term_memory", 35),

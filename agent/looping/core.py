@@ -757,6 +757,43 @@ class AgentLoop:
         trace_flow: str = "workflow",
         trace_title: str = "",
     ) -> str:
+        response = await self.process_direct_outbound(
+            content,
+            session_key=session_key,
+            busy_session_key=busy_session_key,
+            channel=channel,
+            chat_id=chat_id,
+            omit_user_turn=omit_user_turn,
+            skip_post_memory=skip_post_memory,
+            skip_memory_retrieval=skip_memory_retrieval,
+            stream_events=stream_events,
+            disabled_tools=disabled_tools,
+            permission_mode=permission_mode,
+            media=media,
+            trace_id=trace_id,
+            trace_flow=trace_flow,
+            trace_title=trace_title,
+        )
+        return response.content if response else ""
+
+    async def process_direct_outbound(
+        self,
+        content: str,
+        session_key: str = "cli:direct",
+        busy_session_key: str | None = None,
+        channel: str = "cli",
+        chat_id: str = "direct",
+        omit_user_turn: bool = False,
+        skip_post_memory: bool = False,
+        skip_memory_retrieval: bool = False,
+        stream_events: bool = False,
+        disabled_tools: list[str] | None = None,
+        permission_mode: str = "full_access",
+        media: list[str] | None = None,
+        trace_id: str = "",
+        trace_flow: str = "workflow",
+        trace_title: str = "",
+    ) -> OutboundMessage:
         metadata: dict[str, object] = {}
         trace_id = trace_id or current_trace_id()
         if omit_user_turn:
@@ -809,7 +846,7 @@ class AgentLoop:
                 busy_session_key=busy_session_key,
                 dispatch_outbound=False,
             )
-            return response.content if response else ""
+            return response
         except asyncio.CancelledError:
             interrupted = self._interrupt_states.pop(session_key, None)
             interrupted = interrupted or self._active_turn_states.get(session_key)

@@ -28,6 +28,19 @@ export interface Overview {
   channels: ChannelRow[];
 }
 
+export interface ConversationStyleRow {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface ConversationStyleResponse {
+  active_style: string;
+  styles: ConversationStyleRow[];
+  applies_from?: "next_reply";
+  selected?: ConversationStyleRow;
+}
+
 export interface ChannelRow {
   id: string;
   label: string;
@@ -614,7 +627,7 @@ export interface ChatMessage {
   thinking?: string;
   pending?: boolean;
   state?: "stopped" | "error";
-  attachments?: Array<{ name: string; size?: number; mime_type?: string }>;
+  attachments?: Array<{ id?: string; name: string; size?: number; mime_type?: string; url?: string }>;
 }
 
 export interface NavItem {

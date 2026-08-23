@@ -6,6 +6,7 @@ from contextlib import suppress
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 
 from ..attachments import (
     MAX_ATTACHMENT_BYTES,
@@ -99,6 +100,21 @@ def register_chat_routes(
             "deleted": attachments.remove(chat_id, attachment_id),
             "id": attachment_id,
         }
+
+    @app.get("/api/dashboard/chat/{chat_id}/attachments/{attachment_id}/download")
+    def dashboard_chat_download_attachment(
+        chat_id: str,
+        attachment_id: str,
+    ) -> FileResponse:
+        try:
+            record = attachments.get(chat_id, attachment_id)
+        except AttachmentError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return FileResponse(
+            record.path,
+            media_type=record.mime_type,
+            filename=record.name,
+        )
 
     @app.get("/api/dashboard/chat/runs")
     def dashboard_chat_runs() -> dict[str, object]:

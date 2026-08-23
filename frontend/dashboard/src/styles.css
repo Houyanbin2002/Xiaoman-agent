@@ -2210,6 +2210,9 @@ body { background: #ffffff; color: var(--text); }
 .message-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
 .message-attachments > span { min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid #d9dee2; border-radius: 9px; background: rgba(255,255,255,0.66); color: #59636b; font-size: 10px; }
 .message-attachments > span span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-attachments > a { min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid #cfdde7; border-radius: 9px; background: #f5fafc; color: #39749c; font-size: 10px; text-decoration: none; }
+.message-attachments > a:hover { border-color: #9fc2d8; background: #edf7fb; }
+.message-attachments > a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compact-composer:focus-within { border-color: #cbd7df; box-shadow: 0 9px 28px rgba(52, 72, 87, 0.13); }
 .compact-composer textarea {
   min-width: 0;

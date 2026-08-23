@@ -33,7 +33,6 @@ export function ProductSidebar(props: ProductSidebarProps): React.ReactElement {
       </nav>
       {showConversations ? <div className="product-conversation-slot">{props.conversationRail}</div> : <div className="product-sidebar-space" />}
       <button type="button" className={`product-settings ${activeView === "settings" ? "active" : ""}`} onClick={() => props.onNavigate("settings")}><Settings2 size={18} /><span>设置与扩展</span></button>
-      <div className="product-runtime"><span className="product-runtime-avatar"><img src="/assets/assets/xiaoman-avatar.png" alt="" /><i /></span><div><strong>小满正在运行</strong><small>服务正常</small></div></div>
     </aside>
   );
 }

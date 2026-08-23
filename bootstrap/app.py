@@ -271,6 +271,7 @@ class AppRuntime:
         assert self.push_tool is not None
         assert self.memory_runtime is not None
         personal = getattr(self.core, "personal", None)
+        loop_context = getattr(self.agent_loop, "context", None)
         runtime_services = DashboardRuntimeServices(
             config=self.config,
             config_path=self.config_path,
@@ -296,6 +297,7 @@ class AppRuntime:
                 personal.external_sources if personal is not None else None
             ),
             personal_today=(personal.today if personal is not None else None),
+            conversation_styles=getattr(loop_context, "conversation_styles", None),
             gateway_restart=self.gateway_restart,
         )
         self.dashboard_server = build_dashboard_server(

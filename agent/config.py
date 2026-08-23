@@ -162,9 +162,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
             keep_recent_tokens=int(
                 context_compaction.get("keep_recent_tokens", 40_000)
             ),
-            summary_max_tokens=int(
-                context_compaction.get("summary_max_tokens", 4_096)
-            ),
+            summary_max_tokens=int(context_compaction.get("summary_max_tokens", 4_096)),
             chunk_tokens=int(context_compaction.get("chunk_tokens", 24_000)),
             max_history_messages=int(
                 context_compaction.get("max_history_messages", 2_000)
@@ -185,30 +183,27 @@ def load_config(path: str | Path = "config.toml") -> Config:
         execution_guard=ExecutionGuardConfig(
             enabled=bool(execution_guard.get("enabled", True)),
             window_rounds=int(execution_guard.get("window_rounds", 6)),
-            same_signature_warn=int(
-                execution_guard.get("same_signature_warn", 2)
-            ),
-            same_signature_stop=int(
-                execution_guard.get("same_signature_stop", 3)
-            ),
-            no_progress_rounds=int(
-                execution_guard.get("no_progress_rounds", 4)
-            ),
+            same_signature_warn=int(execution_guard.get("same_signature_warn", 2)),
+            same_signature_stop=int(execution_guard.get("same_signature_stop", 3)),
+            no_progress_rounds=int(execution_guard.get("no_progress_rounds", 4)),
             max_tool_calls=int(execution_guard.get("max_tool_calls", 12)),
             soft_timeout_seconds=float(
-                execution_guard.get("soft_timeout_seconds", 90)
+                execution_guard.get("soft_timeout_seconds", 600)
             ),
             hard_timeout_seconds=float(
-                execution_guard.get("hard_timeout_seconds", 150)
+                execution_guard.get("hard_timeout_seconds", 3900)
             ),
             model_call_timeout_seconds=float(
-                execution_guard.get("model_call_timeout_seconds", 90)
+                execution_guard.get("model_call_timeout_seconds", 180)
             ),
             tool_timeout_seconds=float(
-                execution_guard.get("tool_timeout_seconds", 45)
+                execution_guard.get("tool_timeout_seconds", 300)
             ),
             side_effect_tool_timeout_seconds=float(
-                execution_guard.get("side_effect_tool_timeout_seconds", 30)
+                execution_guard.get("side_effect_tool_timeout_seconds", 300)
+            ),
+            blocking_tool_timeout_seconds=float(
+                execution_guard.get("blocking_tool_timeout_seconds", 3600)
             ),
             context_soft_tokens=int(
                 execution_guard.get("context_soft_tokens", 120_000)
@@ -229,7 +224,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
                 execution_guard.get("subagent_max_iterations", 10)
             ),
             subagent_timeout_seconds=float(
-                execution_guard.get("subagent_timeout_seconds", 90)
+                execution_guard.get("subagent_timeout_seconds", 3900)
             ),
             subagent_result_chars=int(
                 execution_guard.get("subagent_result_chars", 12_000)
@@ -238,7 +233,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
                 execution_guard.get("workflow_max_concurrency", 2)
             ),
             workflow_step_timeout_seconds=float(
-                execution_guard.get("workflow_step_timeout_seconds", 180)
+                execution_guard.get("workflow_step_timeout_seconds", 4200)
             ),
             workflow_max_subagent_steps=int(
                 execution_guard.get("workflow_max_subagent_steps", 4)
@@ -343,10 +338,14 @@ def _load_observability_config(data: dict) -> ObservabilityConfig:
     observability = _as_dict(data.get("observability"))
     raw = _as_dict(observability.get("langfuse"))
     public_key = _normalize_optional_config_text(
-        _resolve(str(raw.get("public_key") or os.environ.get("LANGFUSE_PUBLIC_KEY", "")))
+        _resolve(
+            str(raw.get("public_key") or os.environ.get("LANGFUSE_PUBLIC_KEY", ""))
+        )
     )
     secret_key = _normalize_optional_config_text(
-        _resolve(str(raw.get("secret_key") or os.environ.get("LANGFUSE_SECRET_KEY", "")))
+        _resolve(
+            str(raw.get("secret_key") or os.environ.get("LANGFUSE_SECRET_KEY", ""))
+        )
     )
     base_url = _normalize_optional_config_text(
         _resolve(

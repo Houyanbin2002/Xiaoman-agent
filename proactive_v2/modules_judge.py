@@ -66,7 +66,9 @@ class ProactiveJudge:
         self._guard_stopped = False
 
         while ctx.steps_taken < self._cfg.agent_tick_max_steps:
-            ok = await self._run_tool_step(messages, ctx, loop_tag="loop", tool_choice="auto")
+            ok = await self._run_tool_step(
+                messages, ctx, loop_tag="loop", tool_choice="auto"
+            )
             if not ok:
                 break
             if ctx.terminal_action is not None:
@@ -75,7 +77,11 @@ class ProactiveJudge:
         if self._guard_stopped:
             return
 
-        if ctx.terminal_action == "skip" and gw_result is not None and gw_result.content_meta:
+        if (
+            ctx.terminal_action == "skip"
+            and gw_result is not None
+            and gw_result.content_meta
+        ):
             all_content_ids = {m["id"] for m in gw_result.content_meta}
             classified_ids = ctx.interesting_item_ids | ctx.discarded_item_ids
             unclassified_ids = all_content_ids - classified_ids
@@ -101,7 +107,10 @@ class ProactiveJudge:
                 )
                 messages.append({"role": "user", "content": completeness_msg})
                 for _ in range(5):
-                    if ctx.terminal_action is not None or ctx.steps_taken >= self._cfg.agent_tick_max_steps:
+                    if (
+                        ctx.terminal_action is not None
+                        or ctx.steps_taken >= self._cfg.agent_tick_max_steps
+                    ):
                         break
                     ok = await self._run_tool_step(messages, ctx, loop_tag="complete")
                     if not ok:
@@ -110,7 +119,11 @@ class ProactiveJudge:
         if self._guard_stopped:
             return
 
-        if ctx.terminal_action is None and ctx.interesting_item_ids and ctx.steps_taken < self._cfg.agent_tick_max_steps:
+        if (
+            ctx.terminal_action is None
+            and ctx.interesting_item_ids
+            and ctx.steps_taken < self._cfg.agent_tick_max_steps
+        ):
             ids_str = ", ".join(sorted(ctx.interesting_item_ids))
             reflection = (
                 f"【系统提示】你已将以下条目标记为 interesting：{ids_str}。\n"
@@ -123,9 +136,14 @@ class ProactiveJudge:
             )
             messages.append({"role": "user", "content": reflection})
             for _ in range(3):
-                if ctx.terminal_action is not None or ctx.steps_taken >= self._cfg.agent_tick_max_steps:
+                if (
+                    ctx.terminal_action is not None
+                    or ctx.steps_taken >= self._cfg.agent_tick_max_steps
+                ):
                     break
-                ok = await self._run_tool_step(messages, ctx, loop_tag="reflect", tool_choice="auto")
+                ok = await self._run_tool_step(
+                    messages, ctx, loop_tag="reflect", tool_choice="auto"
+                )
                 if not ok:
                     break
 
@@ -218,9 +236,13 @@ class ProactiveJudge:
                 source="proactive",
                 session_key=self._session_key,
                 timeout_seconds=self._guard.tool_timeout(
-                    "external-side-effect"
-                    if tool_name == "message_push"
-                    else "read-only"
+                    (
+                        "external-side-effect"
+                        if tool_name == "message_push"
+                        else "read-only"
+                    ),
+                    tool_name=tool_name,
+                    arguments=tool_args,
                 ),
             ),
             lambda name, args: dispatch(name, args, ctx, self._tool_deps),
@@ -240,7 +262,9 @@ class ProactiveJudge:
                     note=str(exec_result.output)[:160],
                 )
             )
-            logger.warning("[proactive_v2] %s: tool error: %s", loop_tag, exec_result.output)
+            logger.warning(
+                "[proactive_v2] %s: tool error: %s", loop_tag, exec_result.output
+            )
             result = bound_tool_result(
                 ToolResult(text=str(exec_result.output)),
                 self._guard.config.max_tool_result_chars,
@@ -305,9 +329,7 @@ class ProactiveJudge:
         )
         self._guard_state = after.state
         if after.hint:
-            messages.append(
-                {"role": "system", "content": f"【执行保护】{after.hint}"}
-            )
+            messages.append({"role": "system", "content": f"【执行保护】{after.hint}"})
         if after.stop_reason:
             self._guard_stopped = True
             return False
@@ -322,20 +344,26 @@ class ProactiveJudge:
         tool_call_id: str,
         result: str,
     ) -> None:
-        messages.append({
-            "role": "assistant",
-            "content": f"调用工具 {tool_name}",
-            "tool_calls": [{
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(tool_args, ensure_ascii=False),
-                },
-            }],
-        })
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": result,
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": f"调用工具 {tool_name}",
+                "tool_calls": [
+                    {
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(tool_args, ensure_ascii=False),
+                        },
+                    }
+                ],
+            }
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": result,
+            }
+        )

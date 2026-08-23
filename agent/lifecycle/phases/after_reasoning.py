@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+from agent.artifacts import discover_outbound_artifacts
 from agent.core.passive_support import update_session_runtime_metadata
 from agent.core.response_parser import parse_response
 from agent.lifecycle.phase import (
@@ -85,7 +87,7 @@ class _BuildAfterReasoningCtxModule:
 
 class _EmitAfterReasoningCtxModule:
     slot = "after_reasoning.emit"
-    requires = ("after_reasoning.build_ctx", _CTX_SLOT)
+    requires = ("after_reasoning.collect_artifacts", _CTX_SLOT)
     produces = (_CTX_SLOT,)
 
     def __init__(self, bus: EventBus) -> None:
@@ -94,6 +96,28 @@ class _EmitAfterReasoningCtxModule:
     async def run(self, frame: AfterReasoningFrame) -> AfterReasoningFrame:
         ctx = cast(AfterReasoningCtx, frame.slots[_CTX_SLOT])
         frame.slots[_CTX_SLOT] = await self._bus.emit(ctx)
+        return frame
+
+
+class _CollectOutboundArtifactsModule:
+    slot = "after_reasoning.collect_artifacts"
+    requires = ("after_reasoning.build_ctx", _CTX_SLOT)
+    produces = (_CTX_SLOT,)
+
+    def __init__(self, workspace: Path | None) -> None:
+        self._workspace = workspace
+
+    async def run(self, frame: AfterReasoningFrame) -> AfterReasoningFrame:
+        if self._workspace is None:
+            return frame
+        ctx = cast(AfterReasoningCtx, frame.slots[_CTX_SLOT])
+        paths = discover_outbound_artifacts(
+            user_request=frame.input.state.msg.content,
+            reply=ctx.reply,
+            tool_chain=cast(tuple[dict[str, Any], ...], ctx.tool_chain),
+            workspace=self._workspace,
+        )
+        _append_unique_media(ctx.media, paths)
         return frame
 
 
@@ -150,6 +174,7 @@ class _PersistAssistantMessageModule:
         assistant_kwargs: dict[str, Any] = {
             "tools_used": list(ctx.tools_used) if ctx.tools_used else None,
             "tool_chain": list(ctx.tool_chain) if ctx.tool_chain else None,
+            "media": list(ctx.media) if ctx.media else None,
         }
         trace_id = str(
             (frame.input.state.msg.metadata or {}).get("trace_id") or ""
@@ -239,10 +264,12 @@ class _ReturnAfterReasoningResultModule:
 def default_after_reasoning_modules(
     bus: EventBus,
     session_services: SessionServices,
+    workspace: Path | None = None,
     plugin_modules: AfterReasoningModules | None = None,
 ) -> AfterReasoningModules:
     builtins: AfterReasoningModules = [
         _BuildAfterReasoningCtxModule(),
+        _CollectOutboundArtifactsModule(workspace),
         _EmitAfterReasoningCtxModule(bus),
         _PersistUserMessageModule(session_services),
         _PersistAssistantMessageModule(),
@@ -275,3 +302,11 @@ def _collect_persist_user_slots(slots: dict[str, object]) -> dict[str, object]:
 
 def _append_media(target: list[str], exports: dict[str, object]) -> None:
     append_string_exports(target, exports)
+
+
+def _append_unique_media(target: list[str], values: list[str]) -> None:
+    known = set(target)
+    for value in values:
+        if value not in known:
+            target.append(value)
+            known.add(value)

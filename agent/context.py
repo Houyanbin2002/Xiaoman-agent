@@ -10,6 +10,7 @@ from agent.core.types import ContextRenderResult, ContextRequest
 from agent.core.prompt_block import (
     ActiveSkillsPromptBlock,
     BehaviorRulesPromptBlock,
+    ConversationStylePromptBlock,
     IdentityPromptBlock,
     LongTermMemoryPromptBlock,
     MemoryBlockPromptBlock,
@@ -21,6 +22,7 @@ from agent.core.prompt_block import (
     SystemPromptBuilder,
     TurnContext,
 )
+from agent.conversation_styles import ConversationStyleService
 from agent.prompting import (
     PromptAssembler,
     PromptSectionMeta,
@@ -242,10 +244,12 @@ class ContextBuilder:
         self.workspace = workspace
         self.skills = SkillsLoader(workspace)
         self.memory = memory
+        self.conversation_styles = ConversationStyleService(workspace)
         self._system_prompt_builder = SystemPromptBuilder(
             [
                 IdentityPromptBlock(render_fn=build_agent_static_identity_prompt),
                 BehaviorRulesPromptBlock(),
+                ConversationStylePromptBlock(),
                 MemoryBlockPromptBlock(),
                 LongTermMemoryPromptBlock(),
                 SelfModelPromptBlock(),
@@ -341,6 +345,7 @@ class ContextBuilder:
         retrieved_memory_block: str = "",
         disabled_sections: set[str] | None = None,
     ) -> SystemPromptBuildResult:
+        style_id, style_prompt = self.conversation_styles.prompt_state()
         ctx = TurnContext(
             workspace=self.workspace,
             memory=self.memory,
@@ -349,6 +354,8 @@ class ContextBuilder:
             channel=channel,
             chat_id=chat_id,
             retrieved_memory_block=retrieved_memory_block,
+            conversation_style_id=style_id,
+            conversation_style_prompt=style_prompt,
         )
         built = self._system_prompt_builder.build(
             ctx,

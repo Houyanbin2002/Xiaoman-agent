@@ -24,7 +24,7 @@ metadata: {"xiaoman": {"always": false, "requires": {"bins": ["codex"]}}}
 - 只有路径缺失、明显无效，或用户明确要求确认时，主会话才做最小路径检查。
 - 不要把主会话猜测的入口文件、候选目录或搜索结果塞进 Codex prompt，除非这些信息来自用户原文。
 - 步骤内调用 `shell` 必须设置 `auto_promote=false`，不得设置 `run_in_background=true`。
-- `auto_promote=false` 且不传 `timeout` 时会同步等待默认上限；只有需要更短硬截止时才显式设置 `timeout`。
+- `auto_promote=false` 且不传 `timeout` 时，由 ExecutionGuard 的 `blocking_tool_timeout_seconds` 提供长任务预算（默认 1 小时）；只有需要更短硬截止时才显式设置 `timeout`。
 - 使用 `codex exec --cd <repo>` 指定仓库，不依赖 shell 的当前目录。
 - 默认从 `prompt.txt` 经 stdin 传入任务说明，避免引号、换行和特殊字符破坏 prompt。
 - 必须设置 `--output-last-message <task_dir>/codex-result.md`，不要从临时 shell 日志提取最终答复。

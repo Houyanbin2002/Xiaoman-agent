@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from agent.conversation_styles import ConversationStyleService
+
 from .attachments import DashboardAttachmentStore
 from .broker import DashboardChatBroker
 from .contracts import DashboardRuntimeServices
@@ -26,11 +28,30 @@ def register_dashboard_management(
     if services is None:
         return
 
-    broker = DashboardChatBroker(services.event_bus, services.agent_loop)
+    if services.conversation_styles is None:
+        context = getattr(services.agent_loop, "context", None)
+        services.conversation_styles = getattr(context, "conversation_styles", None)
+    if services.conversation_styles is None:
+        services.conversation_styles = ConversationStyleService(services.workspace)
+
     attachments = DashboardAttachmentStore(services.workspace / "uploads" / "dashboard")
+    broker = DashboardChatBroker(
+        services.event_bus,
+        services.agent_loop,
+        attachments,
+    )
     document_parser = DashboardDocumentParser(services.tools)
     if services.push_tool is not None:
-        services.push_tool.register_channel("dashboard", text=broker.push_text)
+        try:
+            services.push_tool.register_channel(
+                "dashboard",
+                text=broker.push_text,
+                file=broker.push_file,
+            )
+        except TypeError:
+            # Compatibility for minimal test/third-party push registries that
+            # still expose the historical text-only signature.
+            services.push_tool.register_channel("dashboard", text=broker.push_text)
     app.state.dashboard_runtime = services
     app.state.dashboard_chat_broker = broker
     app.state.dashboard_attachment_store = attachments
