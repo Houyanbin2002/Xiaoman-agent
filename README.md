@@ -153,12 +153,13 @@ skills/                        用户安装的 Skills
 
 更完整的实现说明见：
 
-- [产品能力与设计](README_XIAOMAN.md)
-- [详细功能清单](README_FEATURES.md)
-- [代码架构](ARCHITECTURE.md)
-- [记忆系统](./_handbook/memory-markdown.md)
-- [主动协助与注意力引擎](./_handbook/attention-engine-v2.md)
-- [内部插件开发](./_handbook/plugins-tutorial.md)
+- [文档索引](./docs/文档索引.md)
+- [产品能力与设计](./docs/产品能力与设计.md)
+- [详细功能清单](./docs/功能清单.md)
+- [代码架构](./docs/代码架构.md)
+- [记忆系统](./docs/记忆系统.md)
+- [主动协助与注意力引擎](./docs/注意力与行动引擎.md)
+- [插件开发指南](./docs/插件开发指南.md)
 
 ## 当前限制
 
@@ -170,7 +171,7 @@ skills/                        用户安装的 Skills
 
 ## 参与贡献
 
-欢迎提交 Issue 和 Pull Request。开始前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。报告安全问题请遵循 [SECURITY.md](SECURITY.md)，不要在公开 Issue 中粘贴 API Key、日志、会话或个人数据库。
+欢迎提交 Issue 和 Pull Request。开始前请阅读 [贡献指南](.github/CONTRIBUTING.md)。报告安全问题请遵循 [项目安全政策](.github/SECURITY.md)，不要在公开 Issue 中粘贴 API Key、日志、会话或个人数据库。
 
 ## License
 
