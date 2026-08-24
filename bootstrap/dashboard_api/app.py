@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
@@ -12,9 +11,7 @@ from bootstrap.dashboard_api.contracts import (
 )
 from bootstrap.dashboard_api.plugins import (
     close_dashboard_value,
-    compile_pending_plugins,
     install_plugin_dashboards,
-    register_plugin_routes,
 )
 from bootstrap.dashboard_api.proactive_reader import ProactiveDashboardReader
 from bootstrap.dashboard_api.routes.memory import register_memory_routes
@@ -57,15 +54,9 @@ def create_dashboard_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        compile_task = asyncio.create_task(compile_pending_plugins())
         try:
             yield
         finally:
-            compile_task.cancel()
-            try:
-                await compile_task
-            except asyncio.CancelledError:
-                pass
             store.close()
             trace_store.close()
             close_dashboard_value(memory_admin)
@@ -95,7 +86,6 @@ def create_dashboard_app(
         )
     )
     register_root_route(app, static_dir=static_dir)
-    register_plugin_routes(app, project_root=project_root)
     register_session_routes(
         app,
         store=store,

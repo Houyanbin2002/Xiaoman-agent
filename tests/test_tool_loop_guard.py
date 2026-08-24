@@ -17,6 +17,7 @@ from core.net.http import (
     configure_default_shared_http_resources,
 )
 from tests.memory_fakes import FakeMemoryEngine
+from tests.loop_runtime import run_agent_kernel
 
 
 class _DummyTool(Tool):
@@ -143,7 +144,7 @@ def test_agent_loop_breaks_on_repeated_same_signature_and_returns_summary(tmp_pa
     loop = _make_agent_loop(tmp_path, provider, tool)
 
     final, tools_used, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "test"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "test"}])
     )
 
     assert "最大迭代" not in final
@@ -185,7 +186,7 @@ def test_agent_loop_breaks_on_repeated_multi_tool_batch_and_keeps_chain_closed(t
     loop = _make_agent_loop_with_tools(tmp_path, provider, [tool_a, tool_b])
 
     final, tools_used, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "test"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "test"}])
     )
 
     assert "已总结" in final
@@ -212,7 +213,7 @@ def test_agent_loop_breaks_on_repeated_unlocked_tool_request(tmp_path):
     )
 
     final, tools_used, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "test"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "test"}])
     )
 
     assert "已总结" in final
@@ -232,7 +233,7 @@ def test_agent_loop_does_not_false_positive_when_args_change(tmp_path):
     loop = _make_agent_loop(tmp_path, provider, tool)
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "test"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "test"}])
     )
 
     assert final == "done"
@@ -253,7 +254,7 @@ def test_agent_loop_max_iterations_returns_progress_summary_not_template(tmp_pat
     loop.max_iterations = 1
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "test"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "test"}])
     )
 
     assert "最大迭代" not in final
@@ -481,7 +482,7 @@ def test_agent_loop_does_not_trigger_on_two_repeats_only(tmp_path):
     loop = _make_agent_loop(tmp_path, provider, tool)
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "t"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "t"}])
     )
 
     assert final == "final"
@@ -501,7 +502,7 @@ def test_agent_loop_ignores_repeated_process_output_in_loop_guard(tmp_path):
     loop = _make_agent_loop(tmp_path, provider, tool)
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "看后台任务状态"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "看后台任务状态"}])
     )
 
     assert final == "状态已确认"
@@ -521,7 +522,7 @@ def test_agent_loop_ignores_repeated_process_stop_in_loop_guard(tmp_path):
     loop = _make_agent_loop(tmp_path, provider, tool)
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "停止后台任务"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "停止后台任务"}])
     )
 
     assert final == "任务已停止"
@@ -567,7 +568,7 @@ def test_agent_loop_does_not_false_positive_when_tool_order_changes(tmp_path):
     )
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "t"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "t"}])
     )
 
     assert final == "ok"
@@ -638,7 +639,7 @@ def test_agent_loop_summary_path_keeps_tool_chain_closed(tmp_path):
     loop = _make_agent_loop(tmp_path, provider, tool)
 
     final, _, _, _vn, _ = asyncio.run(
-        loop._run_agent_loop([{"role": "user", "content": "t"}])
+        run_agent_kernel(loop, [{"role": "user", "content": "t"}])
     )
 
     assert "已总结" in final

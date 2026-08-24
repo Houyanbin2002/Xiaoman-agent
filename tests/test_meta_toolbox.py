@@ -3,7 +3,6 @@ import pytest
 from agent.tools.filesystem import ListDirTool, ReadFileTool
 from agent.tools.meta import (
     META_TOOLBOX_NAMES,
-    build_meta_toolbox_prompt,
     register_common_meta_tools,
     register_memory_meta_tools,
 )
@@ -62,16 +61,6 @@ class _MemoryEngineStub:
         return ""
 
 
-def test_meta_toolbox_prompt_contains_grouped_overview():
-    prompt = build_meta_toolbox_prompt()
-
-    assert "MetaToolBox" in prompt
-    assert "[Read]" in prompt
-    assert "recall_memory" in prompt
-    assert "message_push" in prompt
-    assert "write_file" in prompt
-
-
 def test_register_meta_tool_helpers_mark_expected_tools_always_on():
     tools = ToolRegistry()
     readonly_tools = {
@@ -100,13 +89,8 @@ def test_register_meta_tool_helpers_mark_expected_tools_always_on():
     assert not tools.has_tool("reinforce_memory")
 
 
-def test_meta_toolbox_does_not_advertise_direct_long_term_memory_writes():
-    prompt = build_meta_toolbox_prompt()
-
+def test_meta_toolbox_does_not_register_direct_long_term_memory_writes():
     assert "memorize" not in META_TOOLBOX_NAMES
-    assert "memorize" not in prompt
-
-
 def test_common_meta_toolset_registers_load_skill(tmp_path):
     tools = ToolRegistry()
     readonly_tools = {

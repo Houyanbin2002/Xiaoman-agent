@@ -70,7 +70,7 @@ def test_store_advances_dependencies_and_waiting_steps(tmp_path: Path):
         chat_id="1",
     )
 
-    claimed = store.claim_runnable_steps(limit=3)
+    claimed = store.claim_workflow_steps(workflow.id, limit=3)
     assert [(step.id, step.status) for _, step in claimed] == [
         ("collect", StepStatus.RUNNING)
     ]
@@ -82,7 +82,7 @@ def test_store_advances_dependencies_and_waiting_steps(tmp_path: Path):
 
     store.respond_to_step(workflow.id, "feeling", response="有点疲劳")
     assert store.require_workflow(workflow.id).status == WorkflowStatus.RUNNING
-    claimed = store.claim_runnable_steps(limit=3)
+    claimed = store.claim_workflow_steps(workflow.id, limit=3)
     assert [step.id for _, step in claimed] == ["adjust"]
 
     completed = store.complete_step(workflow.id, "adjust", output="降负荷 10%")
@@ -109,7 +109,7 @@ def test_store_replan_preserves_completed_steps_and_replaces_pending_tail(
         channel="cli",
         chat_id="1",
     )
-    claimed = store.claim_runnable_steps(limit=1)
+    claimed = store.claim_workflow_steps(workflow.id, limit=1)
     assert claimed[0][1].id == "collect"
     completed = store.complete_step(workflow.id, "collect", output="new evidence")
 
@@ -125,7 +125,7 @@ def test_store_replan_preserves_completed_steps_and_replaces_pending_tail(
     assert replanned.steps[0].output == "new evidence"
     assert replanned.steps[1].status == StepStatus.PENDING
     assert replanned.status == WorkflowStatus.RUNNING
-    assert store.claim_runnable_steps(limit=1)[0][1].id == "analyze"
+    assert store.claim_workflow_steps(workflow.id, limit=1)[0][1].id == "analyze"
     event = next(
         item
         for item in store.list_events(workflow.id)
@@ -194,7 +194,10 @@ def test_store_discards_late_agent_results_after_cancellation(tmp_path: Path):
         channel="cli",
         chat_id="1",
     )
-    assert store.claim_runnable_steps(limit=1)[0][1].status == StepStatus.RUNNING
+    assert (
+        store.claim_workflow_steps(workflow.id, limit=1)[0][1].status
+        == StepStatus.RUNNING
+    )
 
     cancelled = store.cancel_workflow(workflow.id, reason="user stopped it")
     cancelled_revision = cancelled.revision
@@ -267,7 +270,7 @@ def test_store_recovers_interrupted_steps_and_blocks_after_retries(tmp_path: Pat
         channel="cli",
         chat_id="1",
     )
-    claimed = store.claim_runnable_steps(limit=1)
+    claimed = store.claim_workflow_steps(workflow.id, limit=1)
     assert claimed[0][1].attempt_count == 1
     store.close()
 
@@ -275,7 +278,7 @@ def test_store_recovers_interrupted_steps_and_blocks_after_retries(tmp_path: Pat
     assert restored.recover_interrupted() == 1
     pending = restored.require_workflow(workflow.id).steps[0]
     assert pending.status == StepStatus.PENDING
-    claimed = restored.claim_runnable_steps(limit=1)
+    claimed = restored.claim_workflow_steps(workflow.id, limit=1)
     assert claimed[0][1].attempt_count == 2
     blocked = restored.fail_step(
         workflow.id,

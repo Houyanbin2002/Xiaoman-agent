@@ -8,10 +8,19 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-if TYPE_CHECKING:
-    from agent.mcp.registry import McpServerRegistry
+
+class McpCatalogRegistry(Protocol):
+    async def add_remote(self, name: str, **kwargs: Any) -> str: ...
+
+    async def add(
+        self,
+        name: str,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -128,7 +137,7 @@ def list_catalog(installed_names: set[str]) -> list[dict[str, object]]:
 
 async def install_catalog_server(
     entry_id: str,
-    registry: "McpServerRegistry",
+    registry: McpCatalogRegistry,
 ) -> str:
     if entry_id not in CATALOG:
         raise ValueError(f"MCP 目录中不存在: {entry_id}")

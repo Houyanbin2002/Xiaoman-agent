@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import re
 
-from core.memory.personal_core import CoreMemorySelection, PersonalCoreMemorySelector
+from core.memory.personal_core import PersonalCoreMemorySelector
 from core.memory.personal_retrieval import (
     GovernedPersonalMemoryRetriever,
     PersonalMemoryHit,
@@ -75,10 +75,6 @@ class GovernedLongTermMemory:
     def render_prompt(self) -> str:
         records = self._prompt_visible_records()
         return self._render_records(records) if records else ""
-
-    def core_selection(self) -> CoreMemorySelection:
-        self.governance.personal_data.expire_due()
-        return self._core_selector.select(self._readable_records())
 
     def retrieve_personal_memory(
         self,

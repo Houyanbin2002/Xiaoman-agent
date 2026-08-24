@@ -24,7 +24,7 @@ from core.memory.engine import (
 )
 from core.memory.execution import build_execution_state
 from memory2.store import MemoryStore2
-from core.memory.plugin import MemoryPluginRuntime
+from agent.plugins.memory import MemoryPluginRuntime
 
 
 def _make_default_engine(
@@ -499,7 +499,7 @@ def test_build_memory_runtime_uses_memory_plugin(monkeypatch, tmp_path: Path):
             return MemoryPluginRuntime(engine=cast(Any, _CustomEngine()))
 
     monkeypatch.setattr(
-        "bootstrap.wiring.resolve_memory_plugin",
+        "bootstrap.memory.resolve_memory_plugin",
         lambda name: _CustomPlugin(),
     )
 
@@ -580,7 +580,10 @@ def test_build_memory_runtime_exposes_default_memory_engine(
             self.embedder = embedder
             self.kwargs = kwargs
 
-    monkeypatch.setattr("agent.memory.MemoryStore", _MemoryStore)
+    monkeypatch.setattr(
+        "infra.persistence.markdown_memory_store.MarkdownMemoryStore",
+        _MemoryStore,
+    )
     monkeypatch.setattr("agent.skills.SkillsLoader", _SkillsLoader)
     monkeypatch.setattr("agent.tools.filesystem.WriteFileTool", _WriteFileTool)
     monkeypatch.setattr("agent.tools.filesystem.EditFileTool", _EditFileTool)

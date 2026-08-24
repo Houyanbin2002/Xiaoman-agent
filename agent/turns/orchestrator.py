@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from agent.turns.outbound import OutboundDispatch, OutboundPort
-from agent.turns.result import TurnResult
+from agent.turns.result import TurnResult, TurnSideEffect
 
 if TYPE_CHECKING:
     from agent.core.runtime_support import SessionLike
@@ -83,7 +84,7 @@ class TurnOrchestrator:
     async def _run_side_effects(self, result: TurnResult) -> None:
         await self._run_effects(result.side_effects)
 
-    async def _run_effects(self, effects: list[Any]) -> None:
+    async def _run_effects(self, effects: Sequence[TurnSideEffect]) -> None:
         for effect in effects:
             try:
                 maybe = effect.run()

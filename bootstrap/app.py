@@ -285,7 +285,6 @@ class AppRuntime:
             push_tool=self.push_tool,
             workspace=self.workspace,
             personal_data=personal.data if personal is not None else None,
-            personal_automation=(personal.automation if personal is not None else None),
             personal_routines=personal.routines if personal is not None else None,
             memory_governance=(personal.governance if personal is not None else None),
             memory_admin=self.memory_runtime.engine,

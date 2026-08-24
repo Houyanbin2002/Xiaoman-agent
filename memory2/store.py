@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from memory2.execution_store import ExecutionMemoryRepository
+from memory2.models import MemoryHit
 
 try:
     import sqlite_vec
@@ -34,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 VEC_DIM = 1024  # 默认维度，MemoryStore2 构造时可覆盖
 _LOCAL_TZ = ZoneInfo("Asia/Shanghai")
-_MemoryHit = dict[str, object]
 _EmbeddingRow = tuple[
     str,
     str,
@@ -656,7 +656,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         self._db.commit()
         return len(rows)
 
-    def list_replacements(self) -> list[dict]:
+    def list_replacements(self) -> list[dict[str, object]]:
         rows = self._db.execute(
             "SELECT old_item_id, old_memory_type, old_summary, old_source_ref, "
             "old_happened_at, old_extra_json, new_item_id, new_memory_type, "
@@ -1223,7 +1223,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         require_scope_match: bool = False,
         hotness_alpha: float = 0.0,
         hotness_half_life_days: float = 14.0,
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         """sqlite-vec KNN 检索路径。维度不符时自动回退全表扫描。"""
         if len(query_vec) != self._vec_dim:
             logger.debug(
@@ -1287,7 +1287,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         rows = cast(list[tuple[object, ...]], self._db.execute(sql, tuple(params)).fetchall())
 
         now = datetime.now(timezone.utc)
-        scored: list[_MemoryHit] = []
+        scored: list[MemoryHit] = []
         for row in rows:
             (
                 row_id,
@@ -1363,7 +1363,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         hotness_half_life_days: float = 14.0,
         time_start: datetime | None = None,
         time_end: datetime | None = None,
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         """全表扫描回退路径（sqlite-vec 不可用时使用）。"""
         has_time_filter = time_start is not None or time_end is not None
         if has_time_filter:
@@ -1419,7 +1419,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         q = np.array(query_vec, dtype=np.float32)
         q_norm = float(np.linalg.norm(q)) + 1e-9
         now = datetime.now(timezone.utc)
-        scored: list[_MemoryHit] = []
+        scored: list[MemoryHit] = []
         for row_id, mtype, summary, emb, extra, happened_at, source_ref in rows:
             if emb is None:
                 continue
@@ -1681,7 +1681,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             "WHERE memory_type='procedure' AND status='active' AND extra_json IS NOT NULL"
         ).fetchall()
 
-        matched: list[dict] = []
+        matched: list[MemoryHit] = []
         for row_id, summary, extra_json_str in rows:
             try:
                 extra = json.loads(extra_json_str) if extra_json_str else {}
@@ -1786,7 +1786,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             f"ORDER BY kw_score DESC, reinforcement DESC, id ASC "
             f"LIMIT ? OFFSET ?"
         )
-        results: list[_MemoryHit] = []
+        results: list[MemoryHit] = []
         offset = 0
         while True:
             params: Sequence[object] = tuple(

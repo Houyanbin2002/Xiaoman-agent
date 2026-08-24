@@ -175,7 +175,10 @@ class SkillsCliProvider:
 
 def _parse_item_id(item_id: str) -> tuple[str, str, str] | None:
     match = _ITEM_ID.fullmatch(item_id.strip())
-    return match.groups() if match else None
+    if match is None:
+        return None
+    owner, repository, skill = match.groups()
+    return owner, repository, skill
 
 
 def _result_ids(output: str) -> list[str]:

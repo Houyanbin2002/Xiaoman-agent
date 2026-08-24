@@ -3,7 +3,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from weakref import WeakValueDictionary
 
@@ -128,8 +127,8 @@ class AgentLoop:
         self._memory_engine = memory_engine
         self._markdown_memory = markdown_memory
         memory_profile = (
-            markdown_memory.store
-            if markdown_memory is not None
+            deps.memory_runtime.profile
+            if deps.memory_runtime is not None
             else cast("MemoryProfileApi", self._memory_engine)
         )
         self._context = deps.context or ContextBuilder(
@@ -305,7 +304,6 @@ class AgentLoop:
             memory=memory_svc,
             workspace=deps.workspace,
         )
-        self._retrieval_pipeline = retrieval_pipeline
         passive_context_store = DefaultContextStore(
             retrieval=retrieval_pipeline,
             context=self._context,
@@ -861,58 +859,6 @@ class AgentLoop:
             if self._active_tasks.get(session_key) is task:
                 self._active_tasks.pop(session_key, None)
                 self._active_turn_states.pop(session_key, None)
-
-    async def _run_agent_loop(
-        self,
-        initial_messages: list[dict],
-        request_time: datetime | None = None,
-        preloaded_tools: set[str] | None = None,
-    ) -> tuple[str, list[str], list[dict], set[str] | None, str | None]:
-        from agent.core.passive_turn import build_turn_injection_prompt
-        from agent.prompting import (
-            PromptSectionRender,
-            build_context_frame_content,
-            build_context_frame_message,
-        )
-
-        # 1. 补充 deferred tools hint（与 run_turn 路径保持一致）。
-        visible = preloaded_tools if self._tool_search_enabled else None
-        hint = build_turn_injection_prompt(
-            tools=self.tools,
-            tool_search_enabled=self._tool_search_enabled,
-            visible_names=visible,
-        )
-        if hint:
-            hint_message = build_context_frame_message(
-                build_context_frame_content(
-                    [
-                        PromptSectionRender(
-                            name="turn_injection",
-                            content=hint,
-                            is_static=False,
-                        )
-                    ]
-                )
-            )
-            if initial_messages and initial_messages[-1].get("role") == "user":
-                initial_messages = initial_messages[:-1] + [
-                    hint_message,
-                    initial_messages[-1],
-                ]
-            else:
-                initial_messages = initial_messages + [hint_message]
-
-        # 2. 内部事件链统一直接走新 Reasoner。
-        result = await self._reasoner.run(
-            initial_messages,
-            request_time=request_time,
-            preloaded_tools=preloaded_tools,
-            preflight_injected=True,
-        )
-        tools_used = list(result.metadata.get("tools_used") or [])
-        tool_chain = list(result.metadata.get("tool_chain") or [])
-        visible_names = result.metadata.get("visible_names")
-        return result.reply, tools_used, tool_chain, visible_names, result.thinking
 
     async def trigger_memory_consolidation(
         self,

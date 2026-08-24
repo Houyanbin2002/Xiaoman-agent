@@ -44,10 +44,6 @@ from proactive_v2.modules_prompt import ProactivePromptBuilder
 from proactive_v2.modules_resolve import (
     ProactiveResolver,
     ResolveResult,
-    ack_discarded,
-    ack_on_success,
-    ack_post_guard_fail,
-    build_delivery_key,
 )
 from proactive_v2.tools import ToolDeps
 
@@ -56,11 +52,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ProactiveTurnPipeline",
     "ProactiveTurnPipelineDeps",
-    "ResolveResult",
-    "ack_discarded",
-    "ack_on_success",
-    "ack_post_guard_fail",
-    "build_delivery_key",
 ]
 
 # ── Fetch 步骤的输出 ──────────────────────────────────────────────────────
@@ -603,7 +594,6 @@ class ProactiveTurnPipeline:
             skip_reason=skip_reason,
             final_message=final_message,
         )
-        self._last_log_result = result
 
     def _emit_proactive_finished(
         self,

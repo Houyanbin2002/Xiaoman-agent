@@ -21,10 +21,10 @@ from core.memory.engine import (
 )
 from plugins.default_memory.engine import DefaultMemoryEngine
 from memory2.embedder import Embedder
+from memory2.models import MemoryHit
 from memory2.retriever import Retriever
 from memory2.store import MemoryStore2
 
-_MemoryHit: TypeAlias = dict[str, object]
 _EmbeddingRow: TypeAlias = tuple[
     str,
     str,
@@ -116,7 +116,7 @@ class _KeywordOnlyStore:
     def __init__(self) -> None:
         self.vector_search_called = False
 
-    def vector_search(self, *_args: object, **_kwargs: object) -> list[_MemoryHit]:
+    def vector_search(self, *_args: object, **_kwargs: object) -> list[MemoryHit]:
         self.vector_search_called = True
         return []
 
@@ -126,7 +126,7 @@ class _KeywordOnlyStore:
         memory_types: list[str] | None = None,
         limit: int = 20,
         **_kwargs: object,
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         assert "支付" in terms
         assert memory_types is None
         assert limit == 30
@@ -149,23 +149,23 @@ class _TimelineStore:
         self.time_start: datetime | None = None
         self.time_end: datetime | None = None
 
-    def vector_search(self, *_args: object, **_kwargs: object) -> list[_MemoryHit]:
+    def vector_search(self, *_args: object, **_kwargs: object) -> list[MemoryHit]:
         self.vector_search_called = True
         return []
 
     def keyword_search_summary(
         self, *_args: object, **_kwargs: object
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         self.keyword_search_called = True
         return []
 
     def list_events_by_time_range(
         self, time_start: datetime, time_end: datetime, limit: int = 200
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         self.time_start = time_start
         self.time_end = time_end
         assert limit == 80
-        hits: list[_MemoryHit] = [
+        hits: list[MemoryHit] = [
             {
                 "id": "e1",
                 "memory_type": "event",
@@ -191,13 +191,13 @@ class _TimedSemanticStore:
         self.vector_batch_vec_count = 0
         self.keyword_kwargs: list[dict[str, object]] = []
 
-    def vector_search(self, *_args: object, **kwargs: object) -> list[_MemoryHit]:
+    def vector_search(self, *_args: object, **kwargs: object) -> list[MemoryHit]:
         self.vector_kwargs.append(kwargs)
         raise AssertionError("带 time_filter 的 semantic 模式应复用 batch 候选")
 
     def vector_search_batch(
         self, query_vecs: list[list[float]], **kwargs: object
-    ) -> list[list[_MemoryHit]]:
+    ) -> list[list[MemoryHit]]:
         self.vector_batch_kwargs.append(kwargs)
         self.vector_batch_vec_count = len(query_vecs)
         return [
@@ -216,21 +216,21 @@ class _TimedSemanticStore:
 
     def keyword_search_summary(
         self, _terms: list[str], **kwargs: object
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         self.keyword_kwargs.append(kwargs)
         return []
 
     def list_events_by_time_range(
         self, *_args: object, **_kwargs: object
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         raise AssertionError("semantic 模式不应直接走 grep 列表")
 
 
 class _FusionStore:
     def __init__(
         self,
-        vector_groups: list[list[_MemoryHit]],
-        keyword_hits: list[_MemoryHit],
+        vector_groups: list[list[MemoryHit]],
+        keyword_hits: list[MemoryHit],
     ) -> None:
         self.vector_groups = vector_groups
         self.keyword_hits = keyword_hits
@@ -241,7 +241,7 @@ class _FusionStore:
         self,
         _query_vecs: list[list[float]],
         **kwargs: object,
-    ) -> list[list[_MemoryHit]]:
+    ) -> list[list[MemoryHit]]:
         self.vector_kwargs.append(kwargs)
         return self.vector_groups
 
@@ -249,9 +249,38 @@ class _FusionStore:
         self,
         _terms: list[str],
         **kwargs: object,
-    ) -> list[_MemoryHit]:
+    ) -> list[MemoryHit]:
         self.keyword_kwargs.append(kwargs)
         return self.keyword_hits
+
+
+def test_retriever_ignores_malformed_hit_metadata_without_polluting_injection() -> None:
+    retriever = Retriever(
+        cast(MemoryStore2, object()),
+        cast(Embedder, _StaticEmbedder()),
+    )
+    items: list[MemoryHit] = [
+        {
+            "id": "broken",
+            "memory_type": "procedure",
+            "summary": "不应进入上下文",
+            "score": "not-a-number",
+            "extra_json": "not-an-object",
+        },
+        {
+            "id": "valid",
+            "memory_type": "preference",
+            "summary": "用户偏好中文回复",
+            "score": 0.9,
+            "extra_json": "not-an-object",
+        },
+    ]
+
+    block, injected_ids = retriever.build_injection_block(items)
+
+    assert "用户偏好中文回复" in block
+    assert "不应进入上下文" not in block
+    assert injected_ids == ["valid"]
 
 
 def test_parse_time_filter_supports_presets_and_ranges(
@@ -438,7 +467,7 @@ async def test_retriever_returns_keyword_hits_when_vector_empty() -> None:
 async def test_retriever_keeps_strong_vector_order_when_keyword_hits_are_low_rank() -> (
     None
 ):
-    vector_hits: list[_MemoryHit] = [
+    vector_hits: list[MemoryHit] = [
         {
             "id": "vec1",
             "memory_type": "event",
@@ -452,7 +481,7 @@ async def test_retriever_keeps_strong_vector_order_when_keyword_hits_are_low_ran
             "score": 0.9,
         },
     ]
-    keyword_hits: list[_MemoryHit] = [
+    keyword_hits: list[MemoryHit] = [
         {
             "id": f"kw{i}",
             "memory_type": "event",

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import httpx
 
-HttpProfile = Literal["external_default", "feed_fetcher", "local_service"]
+HttpProfile = Literal["external_default", "local_service"]
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,6 @@ class HttpRequester:
 @dataclass
 class SharedHttpResources:
     external_default: HttpRequester = field(init=False)
-    feed_fetcher: HttpRequester = field(init=False)
     local_service: HttpRequester = field(init=False)
     _clients: list[httpx.AsyncClient] = field(init=False, default_factory=list)
     _closed: bool = field(init=False, default=False)
@@ -141,24 +140,15 @@ class SharedHttpResources:
         external_client = httpx.AsyncClient(
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)
         )
-        feed_client = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
-        )
         local_client = httpx.AsyncClient(
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
         )
-        self._clients = [external_client, feed_client, local_client]
+        self._clients = [external_client, local_client]
         self.external_default = HttpRequester(
             client=external_client,
             retry_policy=RetryPolicy(max_attempts=3),
             default_timeout_s=30.0,
             default_budget=RequestBudget(total_timeout_s=45.0),
-        )
-        self.feed_fetcher = HttpRequester(
-            client=feed_client,
-            retry_policy=RetryPolicy(max_attempts=3, base_delay_s=0.2, max_delay_s=0.8),
-            default_timeout_s=15.0,
-            default_budget=RequestBudget(total_timeout_s=20.0),
         )
         self.local_service = HttpRequester(
             client=local_client,

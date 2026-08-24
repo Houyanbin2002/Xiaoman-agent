@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import logging
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 import agent.core.passive_support as support
 from agent.capabilities import CapabilityCatalog, CapabilityRouter
 from agent.core.runtime_support import ToolDiscoveryState
+from agent.core.contracts import ContextStore, Reasoner
 from agent.core.types import (
     ContextBundle,
     LLMToolCall,
@@ -610,32 +611,6 @@ class PassiveTurnPipeline:
             )
             return outbound
 
-    # 供其他运行时调用方复用 AfterReasoning + dispatch 流程。
-    async def post_reasoning(
-        self,
-        msg: InboundMessage,
-        session_key: str,
-        turn_result: "TurnRunResult",
-        *,
-        dispatch_outbound: bool = True,
-    ) -> OutboundMessage:
-        state = TurnState(
-            msg=msg,
-            session_key=session_key,
-            dispatch_outbound=dispatch_outbound,
-            session=self._session.session_manager.get_or_create(session_key),
-        )
-        after_reasoning = await self._after_reasoning.run(
-            AfterReasoningInput(state=state, turn_result=turn_result)
-        )
-        return await self._after_turn.run(
-            TurnSnapshot(
-                state=state,
-                outbound=after_reasoning.outbound,
-                ctx=after_reasoning.ctx,
-            )
-        )
-
     # abort / 错误路径的统一 dispatch helper，只有 dispatch_outbound=True 时才发送。
     async def _control_outbound(
         self,
@@ -685,35 +660,14 @@ class PassiveTurnPipeline:
                 control_reply=True,
                 **trace_kwargs,
             )
-            await append_messages(session, session.messages[start:])
+            persist_result = append_messages(session, session.messages[start:])
+            if inspect.isawaitable(persist_result):
+                await persist_result
         except Exception:
             messages = getattr(session, "messages", None)
             if isinstance(messages, list):
                 del messages[start:]
             logger.warning("failed to persist control reply", exc_info=True)
-
-
-class ContextStore(ABC):
-    """
-    ┌──────────────────────────────────────┐
-    │ ContextStore                         │
-    ├──────────────────────────────────────┤
-    │ 1. 读取 session history              │
-    │ 2. 调 retrieval pipeline             │
-    │ 3. 收 skill mentions                 │
-    │ 4. 输出 ContextBundle                │
-    └──────────────────────────────────────┘
-    """
-
-    @abstractmethod
-    async def prepare(
-        self,
-        *,
-        msg: "InboundMessage",
-        session_key: str,
-        session: "SessionLike",
-    ) -> ContextBundle:
-        """准备本轮对话需要的上下文。"""
 
 
 class DefaultContextStore(ContextStore):
@@ -784,69 +738,6 @@ class DefaultContextStore(ContextStore):
             retrieval_metadata=dict(retrieval_result.metadata or {}),
             history_messages=history_messages,
         )
-
-class Reasoner(ABC):
-
-    @abstractmethod
-    async def run(
-        self,
-        initial_messages: list[dict],
-        *,
-        request_time: datetime | None = None,
-        preloaded_tools: set[str] | None = None,
-        preloaded_tool_order: list[str] | None = None,
-        preflight_injected: bool = True,
-        on_content_delta: Callable[[dict[str, str]], Awaitable[None]] | None = None,
-        tool_event_session_key: str = "",
-        tool_event_channel: str = "",
-        tool_event_chat_id: str = "",
-        request_text: str = "",
-        permission_mode: str = "full_access",
-        disabled_tools: set[str] | None = None,
-        resume_from_checkpoint: bool = False,
-    ) -> ReasonerResult:
-        """执行多轮 tool loop，并返回本轮结果。"""
-
-    @abstractmethod
-    async def run_turn(
-        self,
-        *,
-        msg,
-        session: "SessionLike",
-        skill_names: list[str] | None = None,
-        base_history: list[dict] | None = None,
-        retrieved_memory_block: str = "",
-        extra_hints: list[str] | None = None,
-    ) -> "TurnRunResult":
-        """执行完整被动 turn，包括 retry / trim / tool loop。"""
-
-    def add_tool_hooks(self, hooks: list["ToolHook"]) -> None:
-        """子类可重写以注入 tool hooks。默认 no-op。"""
-
-    def add_prompt_render_plugin_modules(
-        self,
-        modules: list[object],
-    ) -> None:
-        """子类可重写以注入 prompt render modules。默认 no-op。"""
-
-    def add_before_step_plugin_modules(
-        self,
-        modules: list[object],
-    ) -> None:
-        """子类可重写以注入 before-step modules。默认 no-op。"""
-
-    def add_after_step_plugin_modules(
-        self,
-        modules: list[object],
-    ) -> None:
-        """子类可重写以注入 after-step modules。默认 no-op。"""
-
-    async def render_prompt(
-        self,
-        input: PromptRenderInput,
-    ) -> PromptRenderResult:
-        raise NotImplementedError
-
 
 class AgentExecutionKernel(Reasoner):
     """唯一的 Agent 执行内核；主 Agent/SubAgent 仅注入不同状态与策略。"""
@@ -993,7 +884,7 @@ class AgentExecutionKernel(Reasoner):
     async def run_turn(
         self,
         *,
-        msg,
+        msg: InboundMessage,
         session: "SessionLike",
         skill_names: list[str] | None = None,
         base_history: list[dict] | None = None,
@@ -1445,7 +1336,7 @@ class AgentExecutionKernel(Reasoner):
                 )
 
         # 2. 再把运行时元数据统一塞进 metadata。
-        react_stats = {
+        react_stats: dict[str, object] = {
             "iteration_count": len(react_input_samples),
             "turn_input_sum_tokens": sum(react_input_samples),
             "turn_input_peak_tokens": max(react_input_samples, default=0),
@@ -1729,18 +1620,6 @@ class AgentExecutionKernel(Reasoner):
         if not content:
             raise RuntimeError(f"{purpose} returned empty content")
         return content
-
-    @staticmethod
-    def format_request_time_anchor(ts: datetime | None) -> str:
-        # 1. 空时间戳时，使用当前本地时间。
-        if ts is None:
-            ts = datetime.now().astimezone()
-        elif ts.tzinfo is None:
-            ts = ts.astimezone()
-
-        # 2. 输出稳定的 request_time 锚点字符串。
-        return f"request_time={ts.isoformat()} ({ts.strftime('%Y-%m-%d %H:%M:%S %Z')})"
-
 
 class DefaultReasoner(AgentExecutionKernel):
     """主 Agent 适配器；执行控制流由 AgentExecutionKernel 统一提供。"""

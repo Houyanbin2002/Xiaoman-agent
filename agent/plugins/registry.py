@@ -70,9 +70,6 @@ class PluginHandlerRegistry:
     def get_by_module_path(self, mp: str) -> list[PluginHandlerMetadata]:
         return [h for h in self._handlers if h.plugin_module_path == mp]
 
-    def get_by_event_type(self, et: PluginEventType) -> list[PluginHandlerMetadata]:
-        return [h for h in self._handlers if h.event_type == et]
-
     def remove_by_module_path(self, mp: str) -> None:
         self._handlers = [h for h in self._handlers if h.plugin_module_path != mp]
 
@@ -94,9 +91,6 @@ class PluginRegistry:
 
     def get_handlers_by_module_path(self, mp: str) -> list[PluginHandlerMetadata]:
         return self._handlers.get_by_module_path(mp)
-
-    def get_handlers_by_event_type(self, et: PluginEventType) -> list[PluginHandlerMetadata]:
-        return self._handlers.get_by_event_type(et)
 
     def remove_plugin(self, mp: str) -> None:
         self._handlers.remove_by_module_path(mp)

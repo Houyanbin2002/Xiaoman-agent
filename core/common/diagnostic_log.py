@@ -64,16 +64,6 @@ def diagnostic_context(
             var.reset(token)
 
 
-def current_diagnostic_context() -> dict[str, str]:
-    return {
-        "session": diagnostic_session.get() or "",
-        "flow": diagnostic_flow.get() or "",
-        "phase": diagnostic_phase.get() or "",
-        "turn": diagnostic_turn.get() or "",
-        "tick": diagnostic_tick.get() or "",
-    }
-
-
 def _clean(value: object) -> str:
     text = str(value if value is not None else "-").replace("\n", " ").strip()
     if not text:

@@ -5,7 +5,7 @@ from pathlib import Path
 from agent.config_models import Config
 from core.memory.coordinator import CompositeMemoryEngine
 from core.memory.personal_semantic import PersonalSemanticRecallService
-from core.memory.plugin import MemoryPluginBuildDeps, MemoryPluginRuntime
+from agent.plugins.memory import MemoryPluginBuildDeps, MemoryPluginRuntime
 from infra.persistence.personal_memory_vector_store import PersonalMemoryVectorStore
 from plugins.akasha.config import (
     ensure_akasha_config_file,
@@ -82,7 +82,6 @@ class MemoryPlugin:
             light_provider=deps.light_provider,
             http_resources=deps.http_resources,
             event_publisher=deps.event_publisher,
-            enable_conversation_ingest=False,
         )
         personal_semantic = PersonalSemanticRecallService(
             store=PersonalMemoryVectorStore(deps.workspace / "personal.db"),

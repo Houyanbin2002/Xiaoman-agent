@@ -93,31 +93,6 @@ def build_procedure_rule_schema(
     }
 
 
-def resolve_procedure_rule_schema(summary: str, extra: dict[str, Any] | None) -> dict[str, list[str]]:
-    payload = extra or {}
-    return build_procedure_rule_schema(
-        summary=summary,
-        tool_requirement=payload.get("tool_requirement"),
-        steps=payload.get("steps") or [],
-        rule_schema=payload.get("rule_schema"),
-    )
-
-
-def procedure_rules_conflict(
-    new_schema: dict[str, list[str]],
-    old_schema: dict[str, list[str]],
-) -> bool:
-    new_terms = _schema_terms(new_schema)
-    old_terms = _schema_terms(old_schema)
-    if not new_terms or not old_terms or not (new_terms & old_terms):
-        return False
-    new_required = set(new_schema.get("required_tools") or [])
-    new_forbidden = set(new_schema.get("forbidden_tools") or [])
-    old_required = set(old_schema.get("required_tools") or [])
-    old_forbidden = set(old_schema.get("forbidden_tools") or [])
-    return bool((new_required & old_forbidden) or (new_forbidden & old_required))
-
-
 def _normalize_schema_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -128,12 +103,6 @@ def _normalize_schema_list(value: Any) -> list[str]:
             if isinstance(item, str) and str(item).strip()
         }
     )
-
-
-def _schema_terms(schema: dict[str, list[str]]) -> set[str]:
-    return set(schema.get("mentioned_tools") or []) | set(
-        schema.get("required_tools") or []
-    ) | set(schema.get("forbidden_tools") or [])
 
 
 def _infer_rule_constraints(

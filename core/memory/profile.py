@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from core.memory.markdown import MemoryProfileApi
+
+
+class MarkdownSupportApi(Protocol):
+    def read_self(self) -> str: ...
+
+    def read_recent_context(self) -> str: ...
 
 
 class CanonicalLongTermMemory(Protocol):
@@ -19,7 +24,7 @@ class UnifiedMemoryProfile:
     support documents because they are not long-term user facts.
     """
 
-    def __init__(self, markdown: MemoryProfileApi) -> None:
+    def __init__(self, markdown: MarkdownSupportApi) -> None:
         self._markdown = markdown
         self._canonical: CanonicalLongTermMemory | None = None
 

@@ -15,7 +15,6 @@ from core.memory.execution import (
     ExecutionScopeKind,
     ExecutionVerificationStatus,
     apply_execution_outcome,
-    is_skill_promotion_candidate,
 )
 
 _SCHEMA = """
@@ -238,14 +237,6 @@ class ExecutionMemoryRepository:
             self._db.commit()
             return updated
 
-    def list_promotion_candidates(self, *, limit: int = 100) -> list[dict[str, object]]:
-        return [
-            item
-            for item in self.list(include_inactive=False, limit=max(limit * 4, 100))
-            if isinstance(state := item.get("execution"), ExecutionMemoryState)
-            and is_skill_promotion_candidate(state)
-        ][: max(1, int(limit))]
-
     def mark_superseded(self, item_ids: Sequence[str]) -> None:
         clean = tuple(
             dict.fromkeys(str(item).strip() for item in item_ids if str(item).strip())
@@ -333,7 +324,7 @@ def _state_from_row(row: Sequence[object]) -> ExecutionMemoryState:
         authority=ExecutionAuthority(str(row[13])),
         lifecycle_status=ExecutionLifecycleStatus(str(row[14])),
         user_locked=bool(row[15]),
-        extraction_confidence=float(row[16] or 0.0),
+        extraction_confidence=_float(row[16]),
         success_count=_int(row[12]),
         failure_count=_int(row[17]),
         last_verified_at=_parse_datetime(row[18]),
@@ -379,3 +370,12 @@ def _int(value: object) -> int:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0
+
+
+def _float(value: object) -> float:
+    if not isinstance(value, (str, int, float)):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

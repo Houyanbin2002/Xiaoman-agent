@@ -57,7 +57,7 @@ from core.memory.governed import GovernedLongTermMemory
 from core.memory.runtime import MemoryRuntime
 from core.memory.semantic_consumer import ConversationMemoryBatchConsumer
 from core.conversation_semantics.events import ConversationSemanticBatchCommitted
-from core.conversation_semantics.runtime import build_conversation_semantics_runtime
+from agent.conversation_semantics.runtime import build_conversation_semantics_runtime
 from core.net.http import SharedHttpResources
 from proactive_v2.presence import PresenceStore
 from session.manager import SessionManager
@@ -403,8 +403,6 @@ def build_core_runtime(
     conversation_memory_consumer = ConversationMemoryBatchConsumer(
         markdown=memory_runtime.markdown.store,
         candidate_sink=governed_long_term.ingest_candidates,
-        get_session=session_manager.get_or_create,
-        save_session=session_manager.save_async,
     )
     conversation_memory_unsubscribe = event_bus.on(
         ConversationSemanticBatchCommitted,
@@ -417,13 +415,6 @@ def build_core_runtime(
         model=config.light_model or config.model,
         session_store=session_manager._store,
         event_bus=event_bus,
-        # 语义提取有自己的 durable cursor，不再按消息条数推进模型上下文游标。
-        # 上下文游标只由 token 水位摘要器在摘要持久化成功后推进。
-        keep_messages=(
-            config.context_compaction.max_history_messages
-            if config.context_compaction.enabled
-            else max(2, config.memory_window // 2)
-        ),
     )
     if conversation_semantics is not None:
         memory_runtime.markdown.maintenance.bind_semantic_flush(

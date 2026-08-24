@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent.marketplace.models import MarketplaceKind
+
 from core.personal.models import DataCategory, PersonalEntityType
 
 
@@ -85,7 +87,7 @@ class SkillInstallPayload(BaseModel):
 
 
 class MarketplaceInstallPayload(BaseModel):
-    kind: str = Field(pattern=r"^(skill|mcp)$")
+    kind: MarketplaceKind
     item_id: str = Field(min_length=1, max_length=500)
     configuration: dict[str, Any] = Field(default_factory=dict, max_length=30)
 

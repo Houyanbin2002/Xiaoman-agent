@@ -47,10 +47,6 @@ def _strip_utf8_bom(text: str) -> tuple[str, bool]:
     return text, False
 
 
-def _normalize_to_lf(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
 def _restore_utf8_bom(text: str, has_bom: bool) -> str:
     if has_bom:
         return "\ufeff" + text

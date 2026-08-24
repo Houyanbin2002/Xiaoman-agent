@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from agent.skills import SkillsLoader
 from agent.background.subagent_executor import SubagentExecutor
 from agent.tool_bundles import build_readonly_research_tools
 from agent.tools.base import Tool
 from agent.tools.meta import register_common_meta_tools
-from agent.tools.message_push import MessagePushTool
 from agent.tools.registry import ToolRegistry
 from agent.tools.skill_loader import LoadSkillTool
 from bootstrap.toolsets.protocol import (
@@ -98,21 +95,3 @@ def build_readonly_tools(
             vl_available=vl_available,
         )
     }
-
-
-def register_meta_and_common_tools(
-    tools: ToolRegistry,
-    readonly_tools: dict[str, Tool],
-    session_store: object,
-    push_tool: MessagePushTool | None = None,
-) -> MessagePushTool:
-    result = CommonMetaToolsetProvider(readonly_tools).register(
-        tools,
-        ToolsetDeps(
-            config=None,
-            workspace=Path("."),
-            session_store=session_store,
-            push_tool=push_tool,
-        ),
-    )
-    return result.extras["push_tool"]

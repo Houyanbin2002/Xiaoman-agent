@@ -14,27 +14,26 @@ import {
   Send,
   Square,
 } from "lucide-react";
-import {
-  ChannelsView,
-  ChatView,
-  ExtensionsView,
-  MemoryView,
-  ModelsView,
-  OverviewView,
-  ProactiveView,
-  SchedulesView,
-  SessionsView,
-  SettingsHubView,
-  TodayView,
-  ToolsView,
-  WorkflowsView,
-} from "./features";
 import { ProductSidebar } from "./app/ProductSidebar";
-import { IconButton } from "./shared/components/ui";
+import { IconButton, LoadingState } from "./shared/components/ui";
 import { api } from "./api";
 import type { ViewId } from "./shared/types";
 import type { PageResult, SessionRow } from "./types";
 import "./styles/index.css";
+
+const ChatView = React.lazy(() => import("./features/chat/ChatView").then(({ ChatView: view }) => ({ default: view })));
+const TodayView = React.lazy(() => import("./features/today/TodayView").then(({ TodayView: view }) => ({ default: view })));
+const OverviewView = React.lazy(() => import("./features/overview/OverviewView").then(({ OverviewView: view }) => ({ default: view })));
+const MemoryView = React.lazy(() => import("./features/memory/MemoryView").then(({ MemoryView: view }) => ({ default: view })));
+const WorkflowsView = React.lazy(() => import("./features/workflows/WorkflowsView").then(({ WorkflowsView: view }) => ({ default: view })));
+const ChannelsView = React.lazy(() => import("./features/channels/ChannelsView").then(({ ChannelsView: view }) => ({ default: view })));
+const ModelsView = React.lazy(() => import("./features/models/ModelsView").then(({ ModelsView: view }) => ({ default: view })));
+const ExtensionsView = React.lazy(() => import("./features/extensions/ExtensionsView").then(({ ExtensionsView: view }) => ({ default: view })));
+const ToolsView = React.lazy(() => import("./features/tools/ToolsView").then(({ ToolsView: view }) => ({ default: view })));
+const SchedulesView = React.lazy(() => import("./features/schedules/SchedulesView").then(({ SchedulesView: view }) => ({ default: view })));
+const ProactiveView = React.lazy(() => import("./features/proactive/ProactiveView").then(({ ProactiveView: view }) => ({ default: view })));
+const SessionsView = React.lazy(() => import("./features/sessions/SessionsView").then(({ SessionsView: view }) => ({ default: view })));
+const SettingsHubView = React.lazy(() => import("./features/settings/SettingsHubView").then(({ SettingsHubView: view }) => ({ default: view })));
 
 interface RecentChat {
   chatId: string;
@@ -276,7 +275,9 @@ function App(): React.ReactElement {
         <header className="app-topbar">
           <div className="topbar-left"><button className="mobile-menu" onClick={() => setMobileNav(true)} aria-label="打开导航" title="打开导航"><Menu size={19} /></button><IconButton icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen} label={sidebarOpen ? "收起侧栏" : "展开侧栏"} onClick={() => setSidebarOpen((value) => !value)} /><span className="product-topbar-date">{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span></div>
         </header>
-        <div className={`content-shell ${view === "chat" ? "chat-content" : ""}`}>{content}</div>
+        <div className={`content-shell ${view === "chat" ? "chat-content" : ""}`}>
+          <React.Suspense fallback={<LoadingState />}>{content}</React.Suspense>
+        </div>
       </main>
       </div>
     </div>

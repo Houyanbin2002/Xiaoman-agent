@@ -266,9 +266,6 @@ class ContextBuilder:
         )
         self._assembler = PromptAssembler(self)
         self._last_debug_breakdown: list[PromptSectionMeta] = []
-        self._last_assembled_contexts: dict[str, dict[str, str]] = {
-            "turn_injection_context": {},
-        }
 
     def set_media_capabilities(
         self,
@@ -284,14 +281,6 @@ class ContextBuilder:
     @property
     def last_debug_breakdown(self) -> list[PromptSectionMeta]:
         return list(self._last_debug_breakdown)
-
-    @property
-    def last_assembled_contexts(self) -> dict[str, dict[str, str]]:
-        return {
-            "turn_injection_context": dict(
-                self._last_assembled_contexts["turn_injection_context"]
-            ),
-        }
 
     def build_turn_injection_context(
         self,
@@ -327,9 +316,6 @@ class ContextBuilder:
             system_sections_bottom=system_sections_bottom,
         )
         self._last_debug_breakdown = assembled.debug_breakdown
-        self._last_assembled_contexts = {
-            "turn_injection_context": dict(assembled.turn_injection_context),
-        }
         return ContextRenderResult(
             system_prompt=assembled.system_prompt,
             turn_injection_context=dict(assembled.turn_injection_context),

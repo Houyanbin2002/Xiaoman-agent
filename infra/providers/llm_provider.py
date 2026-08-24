@@ -12,10 +12,12 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable, TypedDict, cast
 
 from openai import AsyncOpenAI
 
@@ -35,6 +37,23 @@ _LLM_PAYLOAD_SNAPSHOT_ENABLED = False
 _LAST_PAYLOAD_PATH = Path(tempfile.gettempdir()) / "xiaoman-last-llm-payload.json"
 _PAYLOAD_SNAPSHOT_DIR = Path(tempfile.gettempdir()) / "xiaoman-llm-payloads"
 _PAYLOAD_SNAPSHOT_SEQ = itertools.count(1)
+
+JsonObject = dict[str, Any]
+ChatMessage = dict[str, Any]
+
+
+class _ToolCallDelta(TypedDict):
+    index: int
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
+class _CompletionView:
+    message: object
+    usage: object | None
+    finish_reason: str | None
 
 # 安全审查错误码（各厂商）
 _SAFETY_ERROR_CODES = {
@@ -90,11 +109,11 @@ def _decode_tool_arguments(
             raw_arguments=raw,
             reason=f"工具 arguments 顶层必须是 JSON 对象，实际为 {type(decoded).__name__}",
         )
-    return decoded
+    return _mapping_to_json_object(cast(object, decoded))
 
 
 class ProviderStrategy:
-    def normalize_messages(self, messages: list[dict]) -> list[dict]:
+    def normalize_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
         return _strip_reasoning_content(_normalize_chat_messages(messages))
 
     def prepare_request(
@@ -111,7 +130,7 @@ class ProviderStrategy:
 
     def extract_message(
         self,
-        msg: Any,
+        msg: object,
         raw: str | None,
     ) -> tuple[str | None, str | None, dict[str, Any]]:
         thinking: str | None = None
@@ -120,7 +139,7 @@ class ProviderStrategy:
             if m:
                 thinking = m.group(1).strip()
                 raw = _THINK_RE.sub("", raw).strip() or None
-        return raw, thinking, {}
+        return raw, thinking, JsonObject()
 
     def provider_fields_for_tool_call(
         self,
@@ -134,7 +153,7 @@ class ProviderStrategy:
 
 
 class DeepSeekStrategy(ProviderStrategy):
-    def normalize_messages(self, messages: list[dict]) -> list[dict]:
+    def normalize_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
         return _strip_image_url_blocks(
             _normalize_chat_messages(messages, fill_tool_call_content=False)
         )
@@ -167,13 +186,15 @@ class DeepSeekStrategy(ProviderStrategy):
         if thinking_requested and not _deepseek_thinking_disabled(extra_body):
             messages = kwargs.get("messages")
             if isinstance(messages, list):
-                kwargs["messages"] = _ensure_deepseek_reasoning_content(messages)
+                kwargs["messages"] = _ensure_deepseek_reasoning_content(
+                    cast(list[ChatMessage], messages)
+                )
         if extra_body:
             kwargs["extra_body"] = extra_body
 
     def extract_message(
         self,
-        msg: Any,
+        msg: object,
         raw: str | None,
     ) -> tuple[str | None, str | None, dict[str, Any]]:
         reasoning = _get_field(msg, "reasoning_content")
@@ -194,8 +215,9 @@ class DeepSeekStrategy(ProviderStrategy):
         return {**fields, "reasoning_content": ""}
 
     def prepare_stream_request(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        stream_kwargs = {**kwargs, "stream": True}
-        stream_options = dict(stream_kwargs.get("stream_options") or {})
+        stream_kwargs: JsonObject = dict(kwargs)
+        stream_kwargs["stream"] = True
+        stream_options = _mapping_to_json_object(stream_kwargs.get("stream_options"))
         stream_options["include_usage"] = True
         stream_kwargs["stream_options"] = stream_options
         return stream_kwargs
@@ -222,7 +244,7 @@ class LLMProvider:
         api_key: str,
         base_url: str | None = None,
         system_prompt: str = "",
-        extra_body: dict | None = None,
+        extra_body: JsonObject | None = None,
         request_timeout_s: float = 90.0,
         stream_idle_timeout_s: float | None = None,
         max_retries: int = 1,
@@ -232,7 +254,7 @@ class LLMProvider:
     ) -> None:
         normalized_base_url = _normalize_openai_base_url(base_url)
         self._client = AsyncOpenAI(api_key=api_key, base_url=normalized_base_url)
-        self._retired_clients: list[Any] = []
+        self._retired_clients: list[AsyncOpenAI] = []
         self._base_url = normalized_base_url or ""
         self._provider_name = provider_name
         self._system = system_prompt
@@ -297,12 +319,12 @@ class LLMProvider:
 
     async def chat(
         self,
-        messages: list[dict],
-        tools: list[dict],
+        messages: list[ChatMessage],
+        tools: list[JsonObject],
         model: str,
         max_tokens: int,
-        tool_choice: str | dict = "auto",
-        extra_body: dict | None = None,
+        tool_choice: str | JsonObject = "auto",
+        extra_body: JsonObject | None = None,
         disable_thinking: bool = False,
         on_content_delta: Callable[[StreamDelta], Awaitable[None]] | None = None,
     ) -> LLMResponse:
@@ -318,14 +340,16 @@ class LLMProvider:
         )
         # 系统提示作为第一条消息（若 messages 已自带 system 消息则不再重复添加）
         already_has_system = messages and messages[0].get("role") == "system"
-        full_messages = (
-            [{"role": "system", "content": system_prompt}, *messages]
-            if system_prompt and not already_has_system
-            else messages
-        )
+        full_messages: list[ChatMessage] = list(messages)
+        if system_prompt and not already_has_system:
+            full_messages.insert(0, {"role": "system", "content": system_prompt})
         full_messages = _merge_leading_system_messages(full_messages)
         full_messages = strategy.normalize_messages(full_messages)
-        kwargs: dict = dict(model=model, max_tokens=max_tokens, messages=full_messages)
+        kwargs: JsonObject = dict(
+            model=model,
+            max_tokens=max_tokens,
+            messages=full_messages,
+        )
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
@@ -347,37 +371,41 @@ class LLMProvider:
                 base_url=base_url,
             )
 
-        resp = cast(
-            Any,
+        completion = _read_completion(
             await self._create_with_retry(
-                kwargs,
-                client=client,
-                base_url=base_url,
-            ),
+                kwargs, client=client, base_url=base_url
+            )
         )
-        msg = resp.choices[0].message
+        msg = completion.message
 
-        tool_calls = []
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                tool_name = str(tc.function.name or "")
-                call_id = str(tc.id or "")
-                tool_calls.append(
-                    ToolCall(
-                        id=call_id,
-                        name=tool_name,
-                        arguments=_decode_tool_arguments(
-                            tc.function.arguments,
-                            tool_name=tool_name,
-                            call_id=call_id,
-                        ),
-                    )
+        tool_calls: list[ToolCall] = []
+        for tc in _as_sequence(_get_field(msg, "tool_calls")) or ():
+            function = _get_field(tc, "function")
+            if function is None:
+                raise RuntimeError("Provider tool call 缺少 function 字段")
+            tool_name = str(_get_field(function, "name") or "")
+            call_id = str(_get_field(tc, "id") or "")
+            tool_calls.append(
+                ToolCall(
+                    id=call_id,
+                    name=tool_name,
+                    arguments=_decode_tool_arguments(
+                        _get_field(function, "arguments"),
+                        tool_name=tool_name,
+                        call_id=call_id,
+                    ),
                 )
+            )
 
-        raw, thinking, provider_fields = strategy.extract_message(msg, msg.content)
-        usage = getattr(resp, "usage", None)
-        input_tokens, output_tokens, total_tokens = _extract_token_usage(usage)
-        cache_prompt_tokens, cache_hit_tokens = _extract_cache_usage(usage)
+        raw_content = _get_field(msg, "content")
+        content = raw_content if isinstance(raw_content, str) else None
+        raw, thinking, provider_fields = strategy.extract_message(msg, content)
+        input_tokens, output_tokens, total_tokens = _extract_token_usage(
+            completion.usage
+        )
+        cache_prompt_tokens, cache_hit_tokens = _extract_cache_usage(
+            completion.usage
+        )
         if tool_calls:
             provider_fields = strategy.provider_fields_for_tool_call(
                 provider_fields,
@@ -393,9 +421,7 @@ class LLMProvider:
             total_tokens=total_tokens,
             cache_prompt_tokens=cache_prompt_tokens,
             cache_hit_tokens=cache_hit_tokens,
-            finish_reason=(
-                str(getattr(resp.choices[0], "finish_reason", "") or "") or None
-            ),
+            finish_reason=completion.finish_reason,
         )
 
     async def _chat_streaming(
@@ -404,11 +430,11 @@ class LLMProvider:
         on_content_delta: Callable[[StreamDelta], Awaitable[None]],
         strategy: ProviderStrategy,
         *,
-        client: Any,
+        client: AsyncOpenAI,
         base_url: str,
     ) -> LLMResponse:
         stream = cast(
-            Any,
+            AsyncIterator[object],
             await self._create_with_retry(
                 strategy.prepare_stream_request(kwargs),
                 client=client,
@@ -435,7 +461,7 @@ class LLMProvider:
                 )
             except StopAsyncIteration:
                 break
-            chunk_usage = getattr(chunk, "usage", None)
+            chunk_usage = _get_field(chunk, "usage")
             prompt_tokens, hit_tokens = _extract_cache_usage(chunk_usage)
             chunk_input, chunk_output, chunk_total = _extract_token_usage(chunk_usage)
             if prompt_tokens is not None:
@@ -447,14 +473,14 @@ class LLMProvider:
                 output_tokens = chunk_output
             if chunk_total is not None:
                 total_tokens = chunk_total
-            choices = getattr(chunk, "choices", None) or []
-            if not choices:
+            choices = _as_sequence(_get_field(chunk, "choices"))
+            if choices is None or not choices:
                 continue
             choice = choices[0]
-            choice_finish = getattr(choice, "finish_reason", None)
+            choice_finish = _get_field(choice, "finish_reason")
             if choice_finish is not None:
                 finish_reason = str(choice_finish)
-            delta = getattr(choice, "delta", None)
+            delta = _get_field(choice, "delta")
             if delta is None:
                 continue
 
@@ -529,17 +555,23 @@ class LLMProvider:
 
     async def _create_with_retry(
         self,
-        kwargs: dict,
+        kwargs: JsonObject,
         *,
-        client: Any,
+        client: AsyncOpenAI,
         base_url: str,
     ) -> object:
-        _save_llm_payload_snapshot(kwargs, enabled=self._payload_snapshot_enabled)
+        _ = _save_llm_payload_snapshot(
+            kwargs, enabled=self._payload_snapshot_enabled
+        )
         last_err: Exception | None = None
         for attempt in range(self._max_retries + 1):
             try:
-                return await asyncio.wait_for(
+                request = cast(
+                    Awaitable[object],
                     client.chat.completions.create(**kwargs),
+                )
+                return await asyncio.wait_for(
+                    request,
                     timeout=self._request_timeout_s,
                 )
             except Exception as e:
@@ -551,7 +583,7 @@ class LLMProvider:
                     bool(kwargs.get("stream")),
                     base_url,
                     len(kwargs.get("tools") or []),
-                    sorted((kwargs.get("extra_body") or {}).keys()),
+                    sorted(_mapping_to_json_object(kwargs.get("extra_body"))),
                     e,
                 )
                 if self._is_safety_error(e):
@@ -610,14 +642,45 @@ class LLMProvider:
         return any(k in text for k in keywords)
 
 
-def _get_field(delta: Any, name: str) -> Any:
-    if isinstance(delta, dict):
-        return delta.get(name)
-    return getattr(delta, name, None)
+def _get_field(value: object, name: str) -> object | None:
+    if isinstance(value, Mapping):
+        return cast(Mapping[object, object], value).get(name)
+    return cast(object | None, getattr(value, name, None))
 
 
-def _coerce_int(value: Any) -> int | None:
+def _mapping_to_json_object(value: object | None) -> JsonObject:
+    if not isinstance(value, Mapping):
+        return {}
+    mapping = cast(Mapping[object, object], value)
+    return {str(key): item for key, item in mapping.items()}
+
+
+def _read_completion(response: object) -> _CompletionView:
+    choices = _as_sequence(_get_field(response, "choices"))
+    if not choices:
+        raise RuntimeError("Provider response 缺少 choices")
+    choice = choices[0]
+    message = _get_field(choice, "message")
+    if message is None:
+        raise RuntimeError("Provider response 缺少 message")
+    finish_reason_raw = _get_field(choice, "finish_reason")
+    return _CompletionView(
+        message=message,
+        usage=_get_field(response, "usage"),
+        finish_reason=(str(finish_reason_raw) if finish_reason_raw else None),
+    )
+
+
+def _as_sequence(value: object | None) -> Sequence[object] | None:
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return cast(Sequence[object], value)
+    return None
+
+
+def _coerce_int(value: object) -> int | None:
     if value is None:
+        return None
+    if not isinstance(value, str | int | float):
         return None
     try:
         return int(value)
@@ -626,7 +689,7 @@ def _coerce_int(value: Any) -> int | None:
 
 
 def _save_llm_payload_snapshot(
-    kwargs: dict,
+    kwargs: JsonObject,
     *,
     enabled: bool | None = None,
 ) -> Path | None:
@@ -638,8 +701,8 @@ def _save_llm_payload_snapshot(
         seq = next(_PAYLOAD_SNAPSHOT_SEQ)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         path = _PAYLOAD_SNAPSHOT_DIR / f"{ts}-{os.getpid()}-{seq:06d}.json"
-        path.write_text(payload, encoding="utf-8")
-        _LAST_PAYLOAD_PATH.write_text(payload, encoding="utf-8")
+        _ = path.write_text(payload, encoding="utf-8")
+        _ = _LAST_PAYLOAD_PATH.write_text(payload, encoding="utf-8")
         logger.info("[LLM请求快照] saved=%s", path)
         return path
     except Exception as exc:
@@ -647,7 +710,7 @@ def _save_llm_payload_snapshot(
         return None
 
 
-def _extract_cache_usage(usage: Any) -> tuple[int | None, int | None]:
+def _extract_cache_usage(usage: object) -> tuple[int | None, int | None]:
     hit_tokens = _coerce_int(_get_field(usage, "prompt_cache_hit_tokens"))
     miss_tokens = _coerce_int(_get_field(usage, "prompt_cache_miss_tokens"))
     if hit_tokens is not None or miss_tokens is not None:
@@ -664,7 +727,7 @@ def _extract_cache_usage(usage: Any) -> tuple[int | None, int | None]:
 
 
 def _extract_token_usage(
-    usage: Any,
+    usage: object,
 ) -> tuple[int | None, int | None, int | None]:
     input_tokens = _coerce_int(_get_field(usage, "prompt_tokens"))
     output_tokens = _coerce_int(_get_field(usage, "completion_tokens"))
@@ -679,72 +742,43 @@ def _extract_token_usage(
     return input_tokens, output_tokens, total_tokens
 
 
-def _iter_tool_call_deltas(delta: Any) -> list[dict[str, str | int]]:
-    raw_items = _get_field(delta, "tool_calls") or []
-    result: list[dict[str, str | int]] = []
+def _iter_tool_call_deltas(delta: object) -> list[_ToolCallDelta]:
+    raw_items = _as_sequence(_get_field(delta, "tool_calls")) or []
+    result: list[_ToolCallDelta] = []
     for idx, item in enumerate(raw_items):
-        if isinstance(item, dict):
-            function = item.get("function") or {}
+        if isinstance(item, Mapping):
+            item_map = cast(Mapping[object, object], item)
+            raw_function = item_map.get("function")
+            function: Mapping[object, object] = (
+                cast(Mapping[object, object], raw_function)
+                if isinstance(raw_function, Mapping)
+                else cast(Mapping[object, object], {})
+            )
             result.append(
                 {
-                    "index": int(item.get("index", idx)),
-                    "id": str(item.get("id", "") or ""),
+                    "index": _coerce_int(item_map.get("index")) or idx,
+                    "id": str(item_map.get("id", "") or ""),
                     "name": str(function.get("name", "") or ""),
                     "arguments": str(function.get("arguments", "") or ""),
                 }
             )
             continue
-        function = getattr(item, "function", None)
+        function_obj = _get_field(item, "function")
         result.append(
             {
-                "index": int(getattr(item, "index", idx)),
-                "id": str(getattr(item, "id", "") or ""),
-                "name": str(getattr(function, "name", "") or ""),
-                "arguments": str(getattr(function, "arguments", "") or ""),
+                "index": _coerce_int(_get_field(item, "index")) or idx,
+                "id": str(_get_field(item, "id") or ""),
+                "name": str(_get_field(function_obj, "name") or ""),
+                "arguments": str(
+                    _get_field(function_obj, "arguments") or ""
+                ),
             }
         )
     return result
 
 
-def _summarize_roles(messages: list[dict]) -> str:
-    roles = [str(msg.get("role", "?")) for msg in messages]
-    if len(roles) <= 12:
-        return ",".join(roles)
-    head = ",".join(roles[:6])
-    tail = ",".join(roles[-3:])
-    return f"{head},...,{tail}"
-
-
-def _summarize_message_shapes(messages: list[dict]) -> str:
-    shapes: list[str] = []
-    for msg in messages[:8]:
-        keys = sorted(k for k in msg.keys() if k != "content")
-        content = msg.get("content")
-        if isinstance(content, str):
-            content_kind = "str"
-        elif isinstance(content, list):
-            content_kind = "list"
-        elif content is None:
-            content_kind = "none"
-        else:
-            content_kind = type(content).__name__
-        role = str(msg.get("role", "?"))
-        extra = ",".join(keys) if keys else "-"
-        shapes.append(f"{role}[content={content_kind};keys={extra}]")
-    if len(messages) > 8:
-        shapes.append("...")
-    return " | ".join(shapes)
-
-
-def _summarize_tool_names(tools: list[dict]) -> str:
-    names = [str((tool.get("function") or {}).get("name", "?")) for tool in tools[:8]]
-    if len(tools) > 8:
-        names.append("...")
-    return ",".join(names)
-
-
-def _merge_leading_system_messages(messages: list[dict]) -> list[dict]:
-    merged: list[dict] = []
+def _merge_leading_system_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
+    merged: list[ChatMessage] = []
     system_contents: list[str] = []
     idx = 0
     while idx < len(messages) and messages[idx].get("role") == "system":
@@ -783,16 +817,16 @@ def _drop_thinking_keys(extra_body: dict[str, Any]) -> None:
 
 def _deepseek_thinking_disabled(extra_body: dict[str, Any]) -> bool:
     thinking = extra_body.get("thinking")
-    if not isinstance(thinking, dict):
+    if not isinstance(thinking, Mapping):
         return False
-    return str(thinking.get("type", "") or "").lower() == "disabled"
+    return str(cast(Mapping[object, object], thinking).get("type", "") or "").lower() == "disabled"
 
 
 def _deepseek_thinking_enabled(extra_body: dict[str, Any]) -> bool:
     thinking = extra_body.get("thinking")
-    if not isinstance(thinking, dict):
+    if not isinstance(thinking, Mapping):
         return False
-    return str(thinking.get("type", "") or "").lower() == "enabled"
+    return str(cast(Mapping[object, object], thinking).get("type", "") or "").lower() == "enabled"
 
 
 def _normalize_deepseek_effort(value: str) -> str:
@@ -802,8 +836,10 @@ def _normalize_deepseek_effort(value: str) -> str:
     return effort
 
 
-def _ensure_deepseek_reasoning_content(messages: list[dict]) -> list[dict]:
-    normalized: list[dict] = []
+def _ensure_deepseek_reasoning_content(
+    messages: list[ChatMessage],
+) -> list[ChatMessage]:
+    normalized: list[ChatMessage] = []
     for msg in messages:
         item = dict(msg)
         if item.get("role") == "assistant" and "reasoning_content" not in item:
@@ -813,11 +849,11 @@ def _ensure_deepseek_reasoning_content(messages: list[dict]) -> list[dict]:
 
 
 def _normalize_chat_messages(
-    messages: list[dict],
+    messages: list[ChatMessage],
     *,
     fill_tool_call_content: bool = True,
-) -> list[dict]:
-    normalized: list[dict] = []
+) -> list[ChatMessage]:
+    normalized: list[ChatMessage] = []
     for msg in messages:
         item = dict(msg)
         role = str(item.get("role", "") or "")
@@ -825,14 +861,12 @@ def _normalize_chat_messages(
 
         if fill_tool_call_content and role == "assistant" and item.get("tool_calls"):
             if content is None or (isinstance(content, str) and not content.strip()):
-                tool_calls = item.get("tool_calls") or []
-                first = (
-                    tool_calls[0] if isinstance(tool_calls, list) and tool_calls else {}
-                )
-                function = first.get("function") if isinstance(first, dict) else {}
+                tool_calls = _as_sequence(item.get("tool_calls")) or ()
+                first = tool_calls[0] if tool_calls else None
+                function = _get_field(first, "function")
                 tool_name = ""
-                if isinstance(function, dict):
-                    tool_name = str(function.get("name", "") or "")
+                if function is not None:
+                    tool_name = str(_get_field(function, "name") or "")
                 item["content"] = f"调用工具 {tool_name}" if tool_name else "调用工具"
         elif role in {"user", "assistant", "tool"}:
             if content is None:
@@ -842,25 +876,27 @@ def _normalize_chat_messages(
     return normalized
 
 
-def _strip_reasoning_content(messages: list[dict]) -> list[dict]:
+def _strip_reasoning_content(messages: list[ChatMessage]) -> list[ChatMessage]:
     # 非 DeepSeek provider 不应发送 reasoning_content 字段
     return [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
 
 
-def _strip_image_url_blocks(messages: list[dict]) -> list[dict]:
-    normalized: list[dict] = []
+def _strip_image_url_blocks(messages: list[ChatMessage]) -> list[ChatMessage]:
+    normalized: list[ChatMessage] = []
     for msg in messages:
         item = dict(msg)
         content = item.get("content")
-        if isinstance(content, list):
+        blocks = _as_sequence(content)
+        if blocks is not None:
             text_parts: list[str] = []
             image_count = 0
-            for block in content:
-                if not isinstance(block, dict):
+            for block in blocks:
+                if not isinstance(block, Mapping):
                     continue
-                block_type = block.get("type")
+                block_map = cast(Mapping[object, object], block)
+                block_type = block_map.get("type")
                 if block_type == "text":
-                    text = block.get("text")
+                    text = block_map.get("text")
                     if isinstance(text, str) and text:
                         text_parts.append(text)
                 elif block_type == "image_url":

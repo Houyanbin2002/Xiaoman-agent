@@ -152,16 +152,25 @@ class _ManualMemoryOptimizer:
 
 def _seed_workspace(tmp_path) -> None:
     store = SessionStore(tmp_path / "sessions.db")
-    store.create_session(
-        key="telegram:100",
+    store.upsert_session(
+        "telegram:100",
+        created_at="2026-04-19T09:00:00+08:00",
+        updated_at="2026-04-19T10:00:00+08:00",
         metadata={"title": "alpha room"},
         last_consolidated=2,
-        last_user_at="2026-04-19T10:00:00+08:00",
     )
-    store.create_session(
-        key="cli:local",
+    store.update_presence(
+        "telegram:100", last_user_at="2026-04-19T10:00:00+08:00"
+    )
+    store.upsert_session(
+        "cli:local",
+        created_at="2026-04-19T08:00:00+08:00",
+        updated_at="2026-04-19T09:00:00+08:00",
         metadata={"title": "beta room"},
-        last_proactive_at="2026-04-19T09:00:00+08:00",
+        last_consolidated=0,
+    )
+    store.update_presence(
+        "cli:local", last_proactive_at="2026-04-19T09:00:00+08:00"
     )
     store.insert_message(
         "telegram:100",
@@ -351,7 +360,14 @@ def _seed_workspace(tmp_path) -> None:
 def test_list_sessions_with_filters(tmp_path) -> None:
     _seed_workspace(tmp_path)
     store = SessionStore(tmp_path / "sessions.db")
-    store.create_session(key="dashboard:test", metadata={})
+    now = datetime.now().astimezone().isoformat()
+    store.upsert_session(
+        "dashboard:test",
+        created_at=now,
+        updated_at=now,
+        last_consolidated=0,
+        metadata={},
+    )
     store.insert_message(
         "dashboard:test",
         role="user",
@@ -816,57 +832,6 @@ def test_proactive_dashboard_endpoints(tmp_path) -> None:
         assert tick_steps_resp.json()["items"][1]["terminal_action_after"] == "reply"
 
 
-def test_dashboard_lists_installed_plugin_panels(tmp_path, monkeypatch) -> None:
-    _seed_workspace(tmp_path)
-    home = tmp_path / "home"
-    plugin_dir = tmp_path / "installed" / "status_commands" / "0.1.0"
-    plugin_dir.mkdir(parents=True, exist_ok=True)
-    (plugin_dir / "dashboard.py").write_text(
-        "from fastapi import FastAPI\n"
-        "def register(app: FastAPI, plugin_dir, workspace):\n"
-        "    return None\n",
-        encoding="utf-8",
-    )
-    (plugin_dir / "dashboard_panel.js").write_text(
-        "export default {};\n", encoding="utf-8"
-    )
-    registry_dir = home / ".xiaoman-plugin"
-    registry_dir.mkdir(parents=True, exist_ok=True)
-    (registry_dir / "registry.json").write_text(
-        json.dumps(
-            {
-                "plugins": {
-                    "status_commands@github": {
-                        "plugin_id": "status_commands@github",
-                        "source_type": "installed",
-                        "active": True,
-                        "plugin_root": str(plugin_dir),
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-
-    with TestClient(create_dashboard_app(tmp_path)) as client:
-        plugins = client.get("/api/dashboard/plugins").json()
-    installed = next(item for item in plugins if item["id"] == "status_commands@github")
-    assert installed == {
-        "id": "status_commands@github",
-        "panels": [
-            {
-                "name": "dashboard_panel",
-                "js_version": str(
-                    (plugin_dir / "dashboard_panel.js").stat().st_mtime_ns
-                ),
-                "has_css": False,
-            }
-        ],
-    }
-
-
 def test_installed_plugin_dashboard_supports_relative_imports(
     tmp_path, monkeypatch
 ) -> None:
@@ -911,39 +876,3 @@ def test_installed_plugin_dashboard_supports_relative_imports(
         response = client.get("/api/dashboard/test-relative-import")
     assert response.status_code == 200
     assert response.json() == {"value": "ok"}
-
-
-def test_plugin_asset_paths_reject_cross_platform_traversal(tmp_path) -> None:
-    with TestClient(create_dashboard_app(tmp_path)) as client:
-        for path in (
-            "/plugins/..%5Csecret/dashboard_panel.js",
-            "/plugins/C:%5Csecret/dashboard_panel.js",
-            "/plugins/%5C%5Cserver%5Cshare/dashboard_panel.css",
-        ):
-            response = client.get(path)
-            assert response.status_code == 400
-
-        assert client.get("/plugins/missing/dashboard_panel.js").status_code == 404
-
-
-def test_memory_engine_plugins_only_expose_active_engine_panels(tmp_path) -> None:
-    with TestClient(create_dashboard_app(tmp_path)) as client:
-        plugins = client.get("/api/dashboard/plugins").json()
-        memory_plugins = {
-            item["id"]: [panel["name"] for panel in item["panels"]]
-            for item in plugins
-            if item["id"] in {"default_memory", "cross_memory"}
-        }
-        assert memory_plugins == {
-            "default_memory": ["dashboard_panel", "dashboard_panel_inspector"]
-        }
-        assert (
-            client.get(
-                "/plugins/default_memory/dashboard_panel_inspector.js"
-            ).status_code
-            == 200
-        )
-        assert (
-            client.get("/plugins/cross_memory/dashboard_panel_inspector.js").status_code
-            == 404
-        )

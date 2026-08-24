@@ -65,10 +65,6 @@ class McpClient:
         self._recent_stdout: deque[str] = deque(maxlen=8)
         self._recent_stderr: deque[str] = deque(maxlen=8)
 
-    @property
-    def tool_infos(self) -> list[McpToolInfo]:
-        return self._tool_infos
-
     async def connect(self) -> list[McpToolInfo]:
         try:
             return await asyncio.wait_for(

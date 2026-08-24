@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.personal.events import PersonalRecordChanged
-from core.personal.models import CommitmentData, PersonalEntityType, RecordSource
+from core.personal.models import PersonalEntityType, RecordSource
 from core.personal.service import PersonalDataService
 from infra.persistence.personal_store import PersonalStore
 
@@ -17,7 +17,7 @@ def test_personal_data_service_publishes_structured_record_changes(tmp_path) -> 
         entity_type=PersonalEntityType.COMMITMENT,
         title="提交报告",
         summary="周五前提交",
-        data=CommitmentData(title="提交报告", due_at="2026-07-18T09:00:00+00:00"),
+        data={"title": "提交报告", "due_at": "2026-07-18T09:00:00+00:00"},
         source=RecordSource("chat", "message-1"),
         actor="user",
     )

@@ -8,20 +8,12 @@ if TYPE_CHECKING:
     from agent.core.types import ToolCallGroup
 
 
-def _empty_media() -> list[str]:
-    return []
-
-
 def _empty_metadata() -> dict[str, Any]:
     return {}
 
 
 def _empty_int_metadata() -> dict[str, int]:
     return {}
-
-
-def _empty_skill_names() -> list[str]:
-    return []
 
 
 def _empty_tool_chain() -> list[dict[str, Any]]:
@@ -48,16 +40,6 @@ class StreamDeltaReady:
     chat_id: str
     content_delta: str = ""
     thinking_delta: str = ""
-
-
-@dataclass
-class BeforeReasoning:
-    session_key: str
-    channel: str
-    chat_id: str
-    content: str
-    skill_names: list[str] = field(default_factory=_empty_skill_names)
-    retrieved_memory_block: str = ""
 
 
 @dataclass(frozen=True)

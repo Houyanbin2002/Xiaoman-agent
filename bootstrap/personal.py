@@ -34,7 +34,6 @@ from core.attention.source import PersonalAttentionSource
 from core.attention.providers import PersonalRecordSignalProvider
 from core.attention.signals import SignalProviderManifest
 from infra.persistence.memory_governance_store import MemoryGovernanceStore
-from infra.persistence.personal_automation_store import PersonalAutomationStore
 from infra.persistence.personal_store import PersonalStore
 from infra.persistence.external_source_store import ExternalSourceStore
 from agent.integrations.notion_personal_source import NotionPersonalSourceAdapter
@@ -47,7 +46,6 @@ class PersonalRuntime:
     """Owned personal-assistant services assembled by the composition root."""
 
     data: PersonalDataService
-    automation: PersonalAutomationStore
     governance: MemoryGovernanceService
     rhythm: PersonalRhythmService
     attention_source: PersonalAttentionSource
@@ -68,7 +66,6 @@ class PersonalRuntime:
         self.attention.close()
         self.external_sources.close()
         self.governance.close()
-        self.automation.close()
         self.data.close()
 
 
@@ -138,7 +135,6 @@ def build_personal_runtime(
     )
     runtime = PersonalRuntime(
         data=data,
-        automation=PersonalAutomationStore(database),
         governance=governance,
         rhythm=rhythm,
         attention_source=PersonalAttentionSource(

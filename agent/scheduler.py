@@ -19,9 +19,8 @@ import logging
 import re
 import statistics
 import time
-import uuid
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +28,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from core.common.timekit import parse_iso as _parse_iso
+from core.scheduling import ScheduledJob, ScheduledJobChanged
 from infra.persistence.json_store import load_json, save_json
 
 logger = logging.getLogger(__name__)
@@ -251,45 +251,6 @@ def compute_actual_trigger(
     if tier == "instant":
         return fire_at
     return fire_at - timedelta(seconds=tracker.lead)
-
-
-# ── ScheduledJob ─────────────────────────────────────────────────
-
-
-@dataclass
-class ScheduledJob:
-    trigger: str  # "at" | "after" | "every"
-    tier: str  # "instant" | "soft"
-    fire_at: datetime  # 下次名义触发时间（UTC-aware）
-    channel: str
-    chat_id: str
-
-    interval_seconds: int | None = None  # every + interval 模式
-    cron_expr: str | None = None  # every + cron 模式
-
-    message: str | None = None  # instant tier
-    prompt: str | None = None  # soft tier
-
-    name: str | None = None
-    timezone: str = "UTC"
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    run_count: int = 0
-    enabled: bool = True
-    last_attempt_at: datetime | None = None
-    last_status: str = "pending"
-    last_error: str | None = None
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-
-@dataclass(frozen=True)
-class ScheduledJobChanged:
-    """Immutable scheduler lifecycle event for projections and integrations."""
-
-    action: str
-    job_id: str
-    job: dict[str, Any]
 
 
 # ── JobStore ─────────────────────────────────────────────────────

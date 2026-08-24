@@ -6,7 +6,7 @@ import pytest
 
 from bus.event_bus import EventBus
 from bus.events_lifecycle import TurnCommitted
-from core.conversation_semantics.batcher import ConversationSemanticBatcher
+from agent.conversation_semantics.batcher import ConversationSemanticBatcher
 from core.conversation_semantics.events import ConversationSemanticBatchCommitted
 from core.conversation_semantics.models import SemanticBatchPayload
 from core.conversation_semantics.store import ConversationSemanticStore
@@ -94,7 +94,6 @@ async def test_single_turn_only_arms_idle_timer_without_model_call(tmp_path) -> 
         event_bus=bus,
         idle_seconds=3600,
         max_turns=2,
-        keep_messages=20,
     )
     source.append_turn("web:1", "第一轮")
 
@@ -118,7 +117,6 @@ async def test_explicit_preference_flushes_without_waiting_for_idle_timer(tmp_pa
         event_bus=bus,
         idle_seconds=3600,
         max_turns=8,
-        keep_messages=20,
     )
     source.append_turn("web:explicit", "我喜欢先给结论，再给简短步骤。")
 
@@ -143,7 +141,6 @@ async def test_threshold_flush_publishes_one_durable_batch(tmp_path) -> None:
         event_bus=bus,
         idle_seconds=3600,
         max_turns=2,
-        keep_messages=2,
     )
     for text in ("第一轮", "第二轮"):
         source.append_turn("web:1", text)
@@ -184,7 +181,6 @@ async def test_start_replays_prepared_batch_without_reanalysis(tmp_path) -> None
         event_bus=bus,
         idle_seconds=3600,
         max_turns=2,
-        keep_messages=20,
     )
 
     await batcher.start()
@@ -208,7 +204,6 @@ async def test_start_recovers_unprepared_pending_messages(tmp_path) -> None:
         event_bus=bus,
         idle_seconds=3600,
         max_turns=8,
-        keep_messages=20,
     )
 
     await batcher.start()
@@ -232,7 +227,6 @@ async def test_shutdown_flushes_below_threshold_batch(tmp_path) -> None:
         event_bus=bus,
         idle_seconds=3600,
         max_turns=8,
-        keep_messages=20,
     )
     await batcher.on_turn_committed(_turn("web:shutdown", "退出前保留这轮"))
 
@@ -268,7 +262,6 @@ async def test_durable_delivery_retries_only_failed_consumer(tmp_path) -> None:
         event_bus=event_bus,
         idle_seconds=3600,
         max_turns=8,
-        keep_messages=20,
     )
 
     with pytest.raises(RuntimeError, match="durable event delivery failed"):
@@ -302,7 +295,6 @@ async def test_shutdown_keeps_failed_delivery_for_startup_retry(tmp_path) -> Non
         event_bus=event_bus,
         idle_seconds=3600,
         max_turns=8,
-        keep_messages=20,
     )
     await batcher.on_turn_committed(_turn("web:retry-on-start", "退出时消费者暂时失败"))
 

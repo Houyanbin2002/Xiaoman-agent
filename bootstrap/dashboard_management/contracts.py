@@ -22,7 +22,6 @@ class DashboardRuntimeServices:
     push_tool: Any | None
     workspace: Path
     personal_data: Any | None = None
-    personal_automation: Any | None = None
     personal_routines: Any | None = None
     memory_governance: Any | None = None
     memory_admin: Any | None = None

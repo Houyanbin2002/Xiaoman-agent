@@ -1,13 +1,4 @@
-from agent.background.subagent_executor import SubagentExecutor
-from agent.background.subagent_profiles import (
-    SubagentRuntime,
-    SubagentSpec,
-    build_subagent_spec,
-)
+"""隔离式子 Agent 的后台执行实现。
 
-__all__ = [
-    "SubagentExecutor",
-    "SubagentRuntime",
-    "SubagentSpec",
-    "build_subagent_spec",
-]
+调用方应从具体模块导入，避免导入包时提前加载执行器及运行时依赖。
+"""

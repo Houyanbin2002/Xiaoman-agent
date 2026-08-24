@@ -17,7 +17,7 @@ from agent.lifecycle.phase import (
 from agent.lifecycle.types import BeforeTurnCtx, TurnState
 
 if TYPE_CHECKING:
-    from agent.core.passive_turn import ContextStore
+    from agent.core.contracts import ContextStore
     from session.manager import SessionManager
 
 logger = logging.getLogger(__name__)

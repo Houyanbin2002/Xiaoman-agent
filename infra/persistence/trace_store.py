@@ -209,7 +209,9 @@ class TraceStore:
                 "UPDATE traces SET updated_at = ? WHERE id = ?",
                 (_now(), trace_id),
             )
-            event_id = int(cursor.lastrowid)
+            event_id = cursor.lastrowid
+            if event_id is None:
+                raise RuntimeError("trace event insert did not return an id")
         return self.require_event(event_id)
 
     def get_trace(self, trace_id: str) -> TraceRecord | None:

@@ -4,38 +4,14 @@ import json
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Protocol
 
-from agent.lifecycle.types import PromptRenderInput, PromptRenderResult
-
 logger = logging.getLogger("agent.tool_discovery")
-
-
-
-@dataclass
-class MemoryConfig:
-    window: int = 40
-
-
-@dataclass
-class LLMServices:
-    provider: object
-    light_provider: object
-
-
-@dataclass
-class MemoryServices:
-    engine: object
-
 
 @dataclass
 class ToolDiscoveryState:
     _unlocked: dict[str, OrderedDict[str, None]] = field(default_factory=dict)
     capacity: int = 5
-
-    def get_preloaded(self, session_key: str) -> set[str]:
-        return set(self._unlocked.get(session_key, {}).keys())
 
     def get_preloaded_ordered(self, session_key: str) -> list[str]:
         return list(self._unlocked.get(session_key, {}).keys())
@@ -62,15 +38,6 @@ class ToolDiscoveryState:
             return names
         except Exception:
             return []
-
-    def unlock_from_result(self, result_json: str) -> set[str]:
-        """Parse a tool_search JSON result and return the tool names in 'matched'.
-
-        Replaces the module-level _unlock_from_tool_search() that previously
-        lived in agent/core/reasoner.py. Pure parsing — no mutation of external
-        state; caller decides what to do with the returned names.
-        """
-        return set(self.unlock_names_from_result(result_json))
 
     def update(self, session_key: str, tools_used: list[str], always_on: set[str]) -> None:
         skip = always_on | {"tool_search"}
@@ -121,21 +88,3 @@ class TurnRunResult:
     thinking: str | None = None
     streamed: bool = False
     context_retry: dict[str, object] = field(default_factory=dict)
-
-
-class AgentLoopRunner(Protocol):
-    async def __call__(
-        self,
-        initial_messages: list[dict],
-        request_time: datetime | None = None,
-        preloaded_tools: set[str] | None = None,
-    ) -> tuple[str, list[str], list[dict], set[str] | None, str | None]:
-        ...
-
-
-class PromptRenderRunner(Protocol):
-    async def __call__(
-        self,
-        input: PromptRenderInput,
-    ) -> PromptRenderResult:
-        ...

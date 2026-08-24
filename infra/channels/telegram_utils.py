@@ -440,13 +440,6 @@ class TelegramLiveEditQueue:
         self._flood_strikes: dict[int, int] = {}
         self._current_interval_s: dict[int, float] = {}
 
-    async def reserve(self, chat_id: int, *, label: str) -> None:
-        lock = self._locks.setdefault(chat_id, asyncio.Lock())
-        async with lock:
-            await self._wait_for_slot(chat_id)
-            self._mark_used(chat_id)
-            logger.debug("[telegram] live queue reserved: %s chat_id=%s", label, chat_id)
-
     async def run(
         self,
         chat_id: int,

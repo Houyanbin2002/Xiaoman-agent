@@ -7,18 +7,27 @@ from agent.config_models import Config
 from core.llm import LLMProvider
 from agent.tools.meta import register_memory_meta_tools
 from agent.tools.registry import ToolRegistry
-from core.memory.markdown import build_markdown_memory_runtime
-from core.memory.plugin import (
-    DisabledMemoryEngine,
+from core.memory.markdown import MarkdownMemoryMaintenance, MarkdownMemoryRuntime
+from agent.plugins.memory import (
     MemoryPluginBuildDeps,
     MemoryPluginRuntime,
 )
+from core.memory.disabled import DisabledMemoryEngine
 from core.memory.runtime import MemoryRuntime
 from core.net.http import SharedHttpResources
+from infra.persistence.markdown_memory_store import MarkdownMemoryStore
+from bootstrap.memory_plugins import resolve_memory_plugin
 
 if TYPE_CHECKING:
     from bus.event_bus import EventBus
     from core.memory.markdown import MarkdownMemoryRuntime
+
+
+def _build_markdown_memory_runtime(*, workspace: Path) -> MarkdownMemoryRuntime:
+    return MarkdownMemoryRuntime(
+        store=MarkdownMemoryStore(workspace),
+        maintenance=MarkdownMemoryMaintenance(),
+    )
 
 
 # 统一插件构造入口，正常 runtime 和 dashboard 复用同一套路由。
@@ -32,8 +41,6 @@ def _build_memory_plugin_runtime(
     markdown: "MarkdownMemoryRuntime",
     event_publisher: "EventBus | None" = None,
 ) -> MemoryPluginRuntime:
-    from bootstrap.wiring import resolve_memory_plugin
-
     engine_name = (config.memory.engine or "").strip() or "akasha"
     plugin = resolve_memory_plugin(engine_name)
     return plugin.build(
@@ -60,8 +67,6 @@ def ensure_memory_plugin_storage(
     if not _memory_plugin_enabled(config):
         return []
     engine_name = (config.memory.engine or "").strip() or "akasha"
-    from bootstrap.wiring import resolve_memory_plugin
-
     plugin = resolve_memory_plugin(engine_name)
     initializer = getattr(plugin, "ensure_workspace_storage", None)
     if not callable(initializer):
@@ -94,7 +99,7 @@ def build_memory_runtime(
     event_publisher: "EventBus | None" = None,
 ) -> MemoryRuntime:
     # 1. markdown 是默认记忆层，任何 engine 都共用。
-    markdown = build_markdown_memory_runtime(
+    markdown = _build_markdown_memory_runtime(
         workspace=workspace,
     )
 
@@ -134,7 +139,7 @@ def build_memory_admin_runtime(
     event_publisher: "EventBus | None" = None,
 ) -> MemoryRuntime:
     # dashboard 不注册工具，只需要同一套 engine admin 能力和关闭生命周期。
-    markdown = build_markdown_memory_runtime(
+    markdown = _build_markdown_memory_runtime(
         workspace=workspace,
     )
     closeables: list[object] = [http_resources]

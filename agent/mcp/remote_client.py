@@ -159,10 +159,6 @@ class RemoteMcpClient:
         self._callback_future: asyncio.Future[tuple[str, str | None]] | None = None
 
     @property
-    def tool_infos(self) -> list[McpToolInfo]:
-        return self._tool_infos
-
-    @property
     def authorization_required(self) -> bool:
         """Whether a non-interactive connection reached an OAuth redirect."""
 

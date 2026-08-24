@@ -73,19 +73,6 @@ class AgentExecutionPolicy:
     max_iterations_summary_prompt: str | None = None
     max_iterations_fallback: str | None = None
 
-    def prepare_model_messages(
-        self,
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Compatibility hook; cache-aware shaping is owned by the kernel.
-
-        Older policies rewrote previous tool results on every iteration.  That
-        saved tokens but also moved the provider cache prefix.  The shared
-        PromptCacheOptimizer now performs a deterministic breakpoint transform
-        while this policy remains responsible only for execution behaviour.
-        """
-        return messages
-
     def limit_tool_result(self, result: ToolResult) -> ToolResult:
         limit = self.max_tool_result_chars
         if limit is None or len(result.text) <= limit:

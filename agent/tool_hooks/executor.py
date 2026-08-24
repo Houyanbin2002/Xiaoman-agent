@@ -216,43 +216,6 @@ class ToolExecutor:
             post_hook_trace=post_trace,
         )
 
-    async def preflight(
-        self,
-        request: ToolExecutionRequest,
-    ) -> ToolExecutionResult:
-        current_arguments = dict(request.arguments)
-        extra_messages: list[str] = []
-        pre_trace: list[HookTraceItem] = []
-        try:
-            denied_reason, current_arguments = await self._run_pre_hooks(
-                request=request,
-                current_arguments=current_arguments,
-                extra_messages=extra_messages,
-                traces=pre_trace,
-            )
-        except HookExecutionError as exc:
-            return ToolExecutionResult(
-                status="error",
-                output=f"工具执行出错: {exc}",
-                final_arguments=dict(current_arguments),
-                extra_messages=extra_messages,
-                pre_hook_trace=pre_trace,
-            )
-        if denied_reason:
-            return ToolExecutionResult(
-                status="denied",
-                output=denied_reason,
-                final_arguments=dict(current_arguments),
-                extra_messages=extra_messages,
-                pre_hook_trace=pre_trace,
-            )
-        return ToolExecutionResult(
-            status="success",
-            output="",
-            final_arguments=dict(current_arguments),
-            extra_messages=extra_messages,
-            pre_hook_trace=pre_trace,
-        )
 
     async def _run_pre_hooks(
         self,

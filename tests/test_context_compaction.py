@@ -7,7 +7,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from agent.core.passive_turn import DefaultReasoner
-from agent.core.runtime_support import LLMServices, ToolDiscoveryState
+from agent.core.runtime_support import ToolDiscoveryState
+from agent.looping.ports import LLMServices
 from agent.core.types import ContextRenderResult, ContextRequest, ReasonerResult
 from agent.looping.ports import LLMConfig
 from agent.runtime.context_compaction import (
@@ -72,6 +73,7 @@ def _reasoner(
             Any,
             SimpleNamespace(
                 get_always_on_names=lambda: set(),
+                get_documents=lambda: [],
                 get_schemas=lambda names=None: [],
                 get_tool=lambda name: None,
             ),

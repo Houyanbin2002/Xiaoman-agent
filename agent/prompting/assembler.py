@@ -1,12 +1,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from agent.context import ContextBuilder
+
+class MessageEnvelopePort(Protocol):
+    def build(
+        self,
+        *,
+        history: list[dict[str, Any]],
+        current_message: str,
+        system_prompt: str,
+        context_frame: str,
+        channel: str | None,
+        message_timestamp: datetime | None,
+        media: list[str] | None,
+    ) -> list[dict[str, Any]]: ...
+
+
+class SystemPromptBuildPort(Protocol):
+    system_sections: list[PromptSectionRender]
+    debug_breakdown: list[PromptSectionMeta]
+
+
+class ContextBuilderPort(Protocol):
+    @property
+    def _envelope_builder(self) -> MessageEnvelopePort: ...
+
+    def _build_system_prompt_result(
+        self,
+        *,
+        skill_names: list[str] | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        retrieved_memory_block: str = "",
+        disabled_sections: set[str] | None = None,
+    ) -> SystemPromptBuildPort: ...
 
 
 @dataclass(frozen=True)
@@ -54,7 +86,7 @@ _CONTEXT_FRAME_SECTIONS = {
     "self_model",
     "session_context",
 }
-SYSTEM_CONTEXT_FRAME_MARKER = "<system-reminder data-system-context-frame=\"true\">"
+SYSTEM_CONTEXT_FRAME_MARKER = '<system-reminder data-system-context-frame="true">'
 SYSTEM_CONTEXT_FRAME_END = "</system-reminder>"
 LEGACY_CONTEXT_FRAME_MARKER = "[SYSTEM_CONTEXT_FRAME]"
 
@@ -84,7 +116,7 @@ def build_context_frame_content(sections: list[PromptSectionRender]) -> str:
 
 
 class PromptAssembler:
-    def __init__(self, context_builder: "ContextBuilder") -> None:
+    def __init__(self, context_builder: ContextBuilderPort) -> None:
         self._context_builder = context_builder
 
     def assemble(
@@ -115,11 +147,13 @@ class PromptAssembler:
         injection_context = turn_injection_context or {}
         disabled = disabled_sections or set()
         top_sections = [
-            section for section in (system_sections_top or [])
+            section
+            for section in (system_sections_top or [])
             if section.name not in disabled
         ]
         bottom_sections = [
-            section for section in (system_sections_bottom or [])
+            section
+            for section in (system_sections_bottom or [])
             if section.name not in disabled
         ]
         all_sections = [

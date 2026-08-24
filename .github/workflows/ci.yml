@@ -41,6 +41,12 @@ jobs:
       - name: Test backend
         run: python -m pytest -q
 
+      - name: Lint backend
+        run: python -m ruff check .
+
+      - name: Type-check backend
+        run: python -m pyright --project pyrightconfig.json
+
       - name: Type-check frontend
         run: npm run typecheck
 

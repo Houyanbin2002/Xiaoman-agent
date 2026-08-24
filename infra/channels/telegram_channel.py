@@ -40,7 +40,6 @@ from infra.channels.telegram_utils import (
     TelegramOutboundLimiter,
     TelegramLiveEditQueue,
     TelegramLiveTextMessage,
-    TelegramStreamMessage,
     send_markdown,
     send_stream_markdown,
     send_thinking_block,
@@ -117,7 +116,6 @@ class TelegramChannel:
         self.user_map = self._identity_index.mapping
         self._polling_conflict_task: asyncio.Task[None] | None = None
         self._telegram_outbound_limiter = TelegramOutboundLimiter()
-        self._active_streams: dict[str, TelegramStreamMessage] = {}
         self._live_edit_queue = TelegramLiveEditQueue(limiter=self._telegram_outbound_limiter)
         self._live_messages: dict[str, TelegramLiveTextMessage] = {}
         self._reply_buffers: dict[str, str] = {}
@@ -542,19 +540,6 @@ class TelegramChannel:
             self._telegram_outbound_limiter,
         )
 
-    def create_stream_sender(self, chat_id: str):
-        cid = int(self._resolve_chat_id(chat_id))
-        if cid <= 0:
-            return None
-        key = str(cid)
-        stream = TelegramStreamMessage(self._app.bot, cid, self._telegram_outbound_limiter)
-        self._active_streams[key] = stream
-
-        async def _push(delta: dict[str, str] | str) -> None:
-            await stream.push_delta(delta)
-
-        return _push
-
     async def _on_turn_started(self, event: TurnStarted) -> None:
         if event.channel != self._channel:
             return
@@ -670,11 +655,6 @@ class TelegramChannel:
         message = self._live_messages.pop(session_key, None)
         if message is not None:
             await message.delete()
-
-    async def _drain_live_tasks(self) -> None:
-        tasks = [task for task in self._live_tasks if not task.done()]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _final_thinking_text(
         self,
@@ -792,26 +772,13 @@ class TelegramChannel:
                     self._telegram_outbound_limiter,
                 )
             await self._send_final_tool_snapshot(session_key, msg.chat_id)
-        streamed_reply = bool((msg.metadata or {}).get("streamed_reply"))
         if msg.content.strip():
-            if streamed_reply:
-                stream = self._active_streams.pop(str(msg.chat_id), None)
-                if stream is not None:
-                    await stream.finalize(msg.content)
-                else:
-                    await send_markdown(
-                        self._app.bot,
-                        msg.chat_id,
-                        msg.content,
-                        self._telegram_outbound_limiter,
-                    )
-            else:
-                await send_markdown(
-                    self._app.bot,
-                    msg.chat_id,
-                    msg.content,
-                    self._telegram_outbound_limiter,
-                )
+            await send_markdown(
+                self._app.bot,
+                msg.chat_id,
+                msg.content,
+                self._telegram_outbound_limiter,
+            )
         if final_thinking and not had_live:
             await self._send_final_thinking(cid, msg.chat_id, final_thinking)
         self._reply_buffers.pop(session_key, None)

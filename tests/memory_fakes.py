@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent.memory import MemoryStore
+from infra.persistence.markdown_memory_store import MarkdownMemoryStore
 from core.memory.engine import (
     EngineProfile,
     MemoryCapability,
@@ -22,7 +22,7 @@ from core.memory.markdown import ConsolidateRequest, ConsolidateResult
 
 class FakeMemoryEngine:
     def __init__(self, workspace: Path | None = None) -> None:
-        self._store = MemoryStore(workspace) if workspace is not None else None
+        self._store = MarkdownMemoryStore(workspace) if workspace is not None else None
         self.consolidate_calls: list[ConsolidateRequest] = []
         self.retrieve_result = MemoryQueryResult(text_block="")
 
@@ -93,23 +93,6 @@ class FakeMemoryEngine:
         if self._store is None:
             return False
         return self._store.append_history_once(
-            entry,
-            source_ref=source_ref,
-            kind=kind,
-        )
-
-    def append_journal(
-        self,
-        date_str: str,
-        entry: str,
-        *,
-        source_ref: str = "",
-        kind: str = "journal",
-    ) -> bool:
-        if self._store is None:
-            return False
-        return self._store.append_journal(
-            date_str,
             entry,
             source_ref=source_ref,
             kind=kind,

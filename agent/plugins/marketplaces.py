@@ -181,29 +181,6 @@ def list_marketplaces(
     return result
 
 
-def list_marketplace_plugins(
-    name: str,
-    *,
-    plugins_home: Path | None = None,
-) -> list[dict[str, object]]:
-    home = plugins_home or xiaoman_plugins_root()
-    normalized_name = _validate_id(name, label="市场名称")
-    if normalized_name not in _load_marketplace_records(home):
-        raise ValueError(f"市场不存在: {normalized_name}")
-    descriptor = load_marketplace_descriptor(
-        marketplace_checkout_root(home) / normalized_name
-    )
-    return [
-        {
-            "name": plugin.name,
-            "description": plugin.description,
-            "version": plugin.version,
-            "tags": list(plugin.tags),
-        }
-        for plugin in descriptor.plugins
-    ]
-
-
 def install_marketplace_plugin(
     *,
     marketplace: str,

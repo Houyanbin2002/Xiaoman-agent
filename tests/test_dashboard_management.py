@@ -508,7 +508,6 @@ def test_control_overview_and_models_hide_secrets(tmp_path: Path) -> None:
         overview = client.get("/api/dashboard/control/overview")
         models = client.get("/api/dashboard/control/models")
         tasks = client.get("/api/dashboard/control/tasks")
-        legacy_workflows = client.get("/api/dashboard/control/workflows")
 
     assert overview.status_code == 200
     assert overview.json()["model"] == "deepseek-v4-flash"
@@ -519,7 +518,6 @@ def test_control_overview_and_models_hide_secrets(tmp_path: Path) -> None:
     assert "super-secret" not in models.text
     assert tasks.status_code == 200
     assert tasks.json() == []
-    assert legacy_workflows.status_code == 404
     assert "dashboard" in services.push_tool.channels
     _close_services(services)
 
@@ -707,30 +705,6 @@ def test_memory_model_settings_hide_secrets_and_persist_configuration(
     assert persisted["memory"]["embedding"]["output_dimensionality"] == 1024
     assert persisted["memory"]["embedding"]["api_key"] == "embedding-secret"
     assert "embedding-secret" not in saved.text
-    _close_services(services)
-
-
-def test_memory_connection_test_routes_are_removed(tmp_path: Path) -> None:
-    app = FastAPI()
-    services = _services(tmp_path)
-    register_dashboard_management(app, services)
-
-    with TestClient(app) as client:
-        probe = client.post(
-            "/api/dashboard/control/memory/settings/probe",
-            json={
-                "provider": "dashscope",
-                "model": "text-embedding-v4",
-                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "output_dimensionality": 1024,
-                "api_key": "embedding-secret",
-            },
-        )
-
-        health = client.get("/api/dashboard/control/memory/health")
-
-    assert probe.status_code == 404
-    assert health.status_code == 404
     _close_services(services)
 
 

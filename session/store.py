@@ -179,19 +179,6 @@ class SessionStore:
             )
             self._conn.commit()
 
-    def update_last_consolidated(self, key: str, last_consolidated: int) -> None:
-        now = datetime.now().astimezone().isoformat()
-        with self._lock:
-            self._conn.execute(
-                """
-                UPDATE sessions
-                SET last_consolidated = ?, updated_at = ?
-                WHERE key = ?
-                """,
-                (int(last_consolidated), now, key),
-            )
-            self._conn.commit()
-
     def get_session_meta(self, key: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute(
@@ -345,47 +332,6 @@ class SessionStore:
             })
         return result, total
 
-    def create_session(
-        self,
-        *,
-        key: str,
-        metadata: dict[str, Any] | None = None,
-        last_consolidated: int = 0,
-        last_user_at: str | None = None,
-        last_proactive_at: str | None = None,
-    ) -> dict[str, Any]:
-        now = datetime.now().astimezone().isoformat()
-        payload = json.dumps(metadata or {}, ensure_ascii=False)
-        with self._lock:
-            self._conn.execute(
-                """
-                INSERT INTO sessions (
-                    key,
-                    created_at,
-                    updated_at,
-                    last_consolidated,
-                    metadata,
-                    last_user_at,
-                    last_proactive_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    key,
-                    now,
-                    now,
-                    int(last_consolidated),
-                    payload,
-                    last_user_at,
-                    last_proactive_at,
-                ),
-            )
-            self._conn.commit()
-        meta = self.get_session_meta(key)
-        if meta is None:
-            raise ValueError(f"session 创建失败: {key}")
-        return meta
-
     def update_session(
         self,
         key: str,
@@ -520,32 +466,6 @@ class SessionStore:
             "last_user_at": row["last_user_at"],
             "last_proactive_at": row["last_proactive_at"],
         }
-
-    def list_presence(self) -> dict[str, dict[str, str | None]]:
-        with self._lock:
-            rows = self._conn.execute("""
-                SELECT key, last_user_at, last_proactive_at
-                FROM sessions
-                WHERE last_user_at IS NOT NULL OR last_proactive_at IS NOT NULL
-                """).fetchall()
-        return {
-            str(row["key"]): {
-                "last_user_at": row["last_user_at"],
-                "last_proactive_at": row["last_proactive_at"],
-            }
-            for row in rows
-        }
-
-    def most_recent_user_at(self) -> str | None:
-        with self._lock:
-            row = self._conn.execute("""
-                SELECT MAX(last_user_at) AS last_user_at
-                FROM sessions
-                WHERE last_user_at IS NOT NULL
-                """).fetchone()
-        if row is None:
-            return None
-        return row["last_user_at"]
 
     def get_channel_metadata(self, channel: str) -> list[dict[str, Any]]:
         like_key = f"{channel}:%"
@@ -819,57 +739,6 @@ class SessionStore:
                     (now, str(row["session_key"])),
                 )
             self._conn.commit()
-        return int(cur.rowcount or 0)
-
-    def delete_session_messages_and_update_cursor(
-        self,
-        session_key: str,
-        *,
-        ids: list[str],
-        last_consolidated: int,
-    ) -> int:
-        clean_ids = [
-            str(message_id).strip() for message_id in ids if str(message_id).strip()
-        ]
-        if not clean_ids:
-            return 0
-        placeholders = ",".join("?" for _ in clean_ids)
-        now = datetime.now().astimezone().isoformat()
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                seq_rows = self._conn.execute(
-                    f"""
-                    SELECT seq
-                    FROM messages
-                    WHERE session_key = ? AND id IN ({placeholders})
-                    """,
-                    tuple([session_key, *clean_ids]),
-                ).fetchall()
-                next_seq = (
-                    max(int(row["seq"]) for row in seq_rows) + 1 if seq_rows else 0
-                )
-                cur = self._conn.execute(
-                    f"""
-                    DELETE FROM messages
-                    WHERE session_key = ? AND id IN ({placeholders})
-                    """,
-                    tuple([session_key, *clean_ids]),
-                )
-                self._conn.execute(
-                    """
-                    UPDATE sessions
-                    SET last_consolidated = ?,
-                        updated_at = ?,
-                        next_seq = CASE WHEN next_seq < ? THEN ? ELSE next_seq END
-                    WHERE key = ?
-                    """,
-                    (int(last_consolidated), now, next_seq, next_seq, session_key),
-                )
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                raise
         return int(cur.rowcount or 0)
 
     def fetch_by_ids_with_context(

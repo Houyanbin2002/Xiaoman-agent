@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from agent.marketplace import MarketplaceInstaller, MarketplaceService
+from agent.marketplace.models import MarketplaceKind
 from agent.marketplace.curated_mcp_provider import CuratedMcpProvider
 from agent.marketplace.mcp_registry_provider import McpRegistryProvider
 from agent.marketplace.service import CombinedMarketplaceProvider
@@ -319,7 +320,7 @@ def register_system_routes(
 
     @app.get("/api/dashboard/control/marketplace")
     async def search_marketplace(
-        kind: str = Query(pattern=r"^(skill|mcp)$"),
+        kind: MarketplaceKind = Query(),
         query: str = Query(default="", max_length=200),
         q: str = Query(default="", max_length=200),
         limit: int = Query(default=20, ge=1, le=100),
@@ -360,7 +361,7 @@ def register_system_routes(
     @app.get("/api/dashboard/control/marketplace/items/{item_id:path}")
     async def get_marketplace_item(
         item_id: str,
-        kind: str = Query(pattern=r"^(skill|mcp)$"),
+        kind: MarketplaceKind = Query(),
     ) -> dict[str, object]:
         if len(item_id) > 500:
             raise HTTPException(status_code=422, detail="市场条目 ID 过长")
@@ -380,7 +381,7 @@ def register_system_routes(
     ) -> dict[str, str]:
         try:
             result = await marketplace_installer.install(
-                payload.kind,  # type: ignore[arg-type]
+                payload.kind,
                 payload.item_id,
                 payload.configuration,
             )
@@ -394,7 +395,7 @@ def register_system_routes(
 
     @app.post("/api/dashboard/control/marketplace/refresh")
     async def refresh_marketplace(
-        kind: str | None = Query(default=None, pattern=r"^(skill|mcp)$"),
+        kind: MarketplaceKind | None = Query(default=None),
     ) -> dict[str, object]:
         try:
             await asyncio.to_thread(marketplace.refresh, kind)
@@ -601,7 +602,7 @@ def _qr_data_url(content: str) -> str:
 
     image = qrcode.make(content)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    cast(Any, image).save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 

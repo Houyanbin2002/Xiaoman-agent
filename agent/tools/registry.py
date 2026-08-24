@@ -2,10 +2,10 @@ import logging
 from collections.abc import Iterable, Set as AbstractSet
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.tools.base import Tool, ToolResult
+from agent.tools.catalog_models import ToolDocument, ToolMeta
 from agent.tools.search_backend import KeywordSearchBackend, SearchBackend
 
 logger = logging.getLogger(__name__)
@@ -63,63 +63,6 @@ def _with_progress_description(schema: dict[str, Any], tool: Tool) -> dict[str, 
     return cloned
 
 
-# ── ToolMeta ──────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class ToolMeta:
-    risk: str = "read-only"  # "read-only" | "write" | "external-side-effect"
-    always_on: bool = False
-    # 可选：3–10 词短语，补充工具名和描述中没有的别名或口语化表达。
-    # 不需要重复名称或描述里已有的词——搜索后端自动索引 name + description。
-    search_hint: str | None = None
-
-
-# ── ToolDocument ──────────────────────────────────────────────────────────────
-
-
-@dataclass
-class ToolDocument:
-    """工具的索引态视图，派生自 Tool + ToolMeta，供搜索后端使用。
-
-    搜索后端自动索引：name、description。
-    search_hint 是可选补充，仅在名称和描述无法覆盖某些口语别名时填写。
-    """
-
-    name: str
-    description: str
-    risk: str
-    always_on: bool
-    search_hint: str | None
-    source_type: str  # "builtin" | "mcp" | "plugin" | "peer"
-    source_name: str  # server/plugin/agent 名，builtin 为空字符串
-    parameter_names: tuple[str, ...] = ()
-
-    @classmethod
-    def from_tool_and_meta(
-        cls,
-        tool: "Tool",
-        meta: ToolMeta,
-        source_type: str = "builtin",
-        source_name: str = "",
-    ) -> "ToolDocument":
-        return cls(
-            name=tool.name,
-            description=tool.description,
-            risk=meta.risk,
-            always_on=meta.always_on,
-            search_hint=meta.search_hint,
-            source_type=source_type,
-            source_name=source_name,
-            parameter_names=tuple(
-                str(name)
-                for name in (
-                    (tool.parameters or {}).get("properties", {}) or {}
-                ).keys()
-            ),
-        )
-
-
 # ── ToolRegistry ──────────────────────────────────────────────────────────────
 
 
@@ -139,9 +82,6 @@ class ToolRegistry:
     def set_context(self, **kwargs: str) -> None:
         """设置当前会话上下文（channel、chat_id 等），供工具按需读取。"""
         self._context.set({**self._context.get(), **kwargs})
-
-    def get_context(self) -> dict[str, str]:
-        return dict(self._context.get())
 
     def register(
         self,
@@ -231,9 +171,7 @@ class ToolRegistry:
         """Return one catalog document without exposing registry internals."""
         return self._documents.get(name)
 
-    def get_deferred_names(
-        self, visible: set[str] | None = None
-    ) -> dict[str, object]:
+    def get_deferred_names(self, visible: set[str] | None = None) -> dict[str, object]:
         """返回所有 deferred 工具名，按来源分组。
 
         visible: 当前 turn 已可见工具名（always_on + preloaded），从结果中排除。

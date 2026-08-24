@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -157,7 +158,7 @@ class DashboardChatBroker:
             process = getattr(agent_loop, "process_direct_outbound", None)
             if not callable(process):
                 process = agent_loop.process_direct
-            result = await process(
+            process_result = process(
                 run.prompt,
                 session_key=run.session_key,
                 busy_session_key=run.session_key,
@@ -166,6 +167,11 @@ class DashboardChatBroker:
                 stream_events=True,
                 permission_mode=run.permission_mode,
                 media=run.media,
+            )
+            result = (
+                await process_result
+                if inspect.isawaitable(process_result)
+                else process_result
             )
         except asyncio.CancelledError:
             self._broadcast(
@@ -219,7 +225,9 @@ class DashboardChatBroker:
             metadata["title"] = _chat_title(content)
         save_async = getattr(manager, "save_async", None)
         if callable(save_async):
-            await save_async(session)
+            save_result = save_async(session)
+            if inspect.isawaitable(save_result):
+                await save_result
 
     def _on_delta(self, event: StreamDeltaReady) -> None:
         run = self._runs.get(event.session_key)
@@ -360,7 +368,9 @@ class DashboardChatBroker:
         )
         save_async = getattr(manager, "save_async", None)
         if callable(save_async):
-            await save_async(session)
+            save_result = save_async(session)
+            if inspect.isawaitable(save_result):
+                await save_result
         else:
             manager.save(session)
         return True

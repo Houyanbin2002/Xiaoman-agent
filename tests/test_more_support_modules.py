@@ -183,6 +183,17 @@ async def test_provider_chat_and_retry_paths(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(RuntimeError):
         await LLMProvider(api_key="k", max_retries=0).chat([], [], "m", 1)
 
+
+@pytest.mark.asyncio
+async def test_provider_rejects_completion_without_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeClient([SimpleNamespace(choices=[], usage=None)])
+    monkeypatch.setattr("infra.providers.llm_provider.AsyncOpenAI", lambda **_: fake)
+
+    with pytest.raises(RuntimeError, match="缺少 choices"):
+        await LLMProvider(api_key="k").chat([], [], "m", 1)
+
     fake = _FakeClient([RuntimeError("bad request")])
     monkeypatch.setattr("infra.providers.llm_provider.AsyncOpenAI", lambda **_: fake)
     with pytest.raises(RuntimeError):

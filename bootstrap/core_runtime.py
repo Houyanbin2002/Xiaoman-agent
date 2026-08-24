@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -22,7 +23,7 @@ from bootstrap.personal import PersonalRuntime
 from bus.event_bus import EventBus
 from bus.queue import MessageBus
 from core.memory.runtime import MemoryRuntime
-from core.conversation_semantics.runtime import ConversationSemanticsRuntime
+from agent.conversation_semantics.runtime import ConversationSemanticsRuntime
 from core.net.http import SharedHttpResources
 from proactive_v2.presence import PresenceStore
 from session.manager import SessionManager
@@ -223,7 +224,9 @@ class CoreRuntime:
             await self.workflow_runtime.aclose()
         close_loop = getattr(self.loop, "aclose", None)
         if callable(close_loop):
-            await close_loop()
+            close_result = close_loop()
+            if inspect.isawaitable(close_result):
+                await close_result
         if self.plugin_manager is not None:
             await self.plugin_manager.terminate_all()
         await self.mcp_registry.shutdown()

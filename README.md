@@ -27,7 +27,7 @@
 - **主动协助**：结合时间、场景、免打扰和反馈，在值得且合适时提醒或行动。
 - **扩展能力**：支持 Skills，以及本地 stdio、远程 HTTP/SSE 和 OAuth MCP 服务。
 - **多模型分工**：可分别配置主模型、快速模型、复杂任务模型、视觉模型和向量模型。
-- **多渠道接入**：内置 Web，并提供 Telegram、QQ、微信、企业微信和飞书适配能力。
+- **多渠道接入**：内置 Web 和 Telegram，并提供 QQ、微信、企业微信适配插件。
 
 ## 工作方式
 
@@ -146,8 +146,9 @@ skills/                        用户安装的 Skills
 | `core/` | 个人数据、记忆、注意力、工作流等领域逻辑 |
 | `bootstrap/` | 依赖装配、服务启动和生命周期管理 |
 | `infra/` | SQLite、模型供应商和可观测性实现 |
-| `plugins/` | 记忆后端与消息渠道等系统适配器 |
+| `plugins/` | 记忆后端、消息渠道及其诊断 API 等系统适配器 |
 | `proactive_v2/` | 外部数据轮询与主动消息投递 |
+| `eval/` | 当前 Rubric、LLM Judge 与真实 Agent 回归评测框架 |
 | `frontend/dashboard/` | React Dashboard 源码 |
 | `tests/` | 后端自动化测试 |
 

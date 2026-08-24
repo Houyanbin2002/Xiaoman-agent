@@ -356,10 +356,6 @@ class Memorizer:
         )
         return True
 
-    def supersede_batch(self, ids: list[str]) -> None:
-        self._store.mark_superseded_batch(ids)
-        logger.info(f"memory2 superseded {len(ids)} items: {ids}")
-
     def reinforce_items_batch(self, ids: list[str]) -> None:
         self._store.reinforce_items_batch(ids)
 

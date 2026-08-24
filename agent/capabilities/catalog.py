@@ -104,8 +104,7 @@ class CapabilityCatalog:
         self._skills = skills
 
     def records(self) -> list[CapabilityRecord]:
-        get_documents = getattr(self._tools, "get_documents", None)
-        documents = get_documents() if callable(get_documents) else []
+        documents = self._tools.get_documents()
         records = [
             CapabilityRecord(
                 kind="tool",

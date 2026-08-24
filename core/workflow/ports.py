@@ -70,12 +70,6 @@ class WorkflowStorePort(Protocol):
 
     def prepare_human_steps(self) -> list[tuple[WorkflowInstance, WorkflowStep]]: ...
 
-    def claim_runnable_steps(
-        self,
-        *,
-        limit: int = 3,
-    ) -> list[tuple[WorkflowInstance, WorkflowStep]]: ...
-
     def claim_workflow_steps(
         self,
         workflow_id: str,

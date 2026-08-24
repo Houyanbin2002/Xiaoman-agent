@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 import hashlib
 import logging
@@ -9,7 +9,6 @@ from typing import Protocol
 
 from core.memory.personal_retrieval import PersonalMemoryQueryResult
 from core.personal.models import PersonalRecord
-from infra.persistence.personal_memory_vector_store import PersonalMemoryVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +19,32 @@ class PersonalEmbeddingProvider(Protocol):
     async def embed(self, text: str) -> list[float]: ...
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
+
+
+class PersonalMemoryVectorStorePort(Protocol):
+    def stale_ids(
+        self,
+        hashes: Mapping[str, str],
+        *,
+        model: str,
+    ) -> list[str]: ...
+
+    def upsert_many(
+        self,
+        rows: Sequence[tuple[str, str, str, Sequence[float]]],
+    ) -> None: ...
+
+    def delete_except(self, record_ids: set[str]) -> None: ...
+
+    def semantic_scores(
+        self,
+        query: Sequence[float],
+        *,
+        record_ids: set[str],
+        model: str,
+    ) -> dict[str, float]: ...
+
+    def close(self) -> None: ...
 
 
 class PersonalSemanticSource(Protocol):
@@ -42,7 +67,7 @@ class PersonalSemanticRecallService:
     def __init__(
         self,
         *,
-        store: PersonalMemoryVectorStore,
+        store: PersonalMemoryVectorStorePort,
         embedder: PersonalEmbeddingProvider,
         model: str,
         foreground_timeout_s: float = _DEFAULT_FOREGROUND_TIMEOUT_S,

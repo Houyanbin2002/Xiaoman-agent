@@ -15,6 +15,7 @@ from agent.looping.ports import AgentLoopConfig, AgentLoopDeps, LLMConfig, Memor
 from core.llm import LLMResponse, ToolCall
 from agent.tools.base import Tool
 from agent.tools.registry import ToolRegistry
+from tests.loop_runtime import run_agent_kernel
 from tests.memory_fakes import FakeMemoryEngine
 
 
@@ -98,7 +99,9 @@ def test_reflect_prompt_no_longer_contains_procedure_hint(tmp_path: Path):
             ]
         )
     )
-    asyncio.run(loop._run_agent_loop([context_frame, {"role": "user", "content": "test"}]))
+    asyncio.run(
+        run_agent_kernel(loop, [context_frame, {"role": "user", "content": "test"}])
+    )
 
     reflect_msgs = provider.calls[1]["messages"]
     all_content = " ".join(str(m.get("content", "")) for m in reflect_msgs)

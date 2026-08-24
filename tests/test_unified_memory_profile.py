@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from core.memory.engine import MemoryEngine
 from core.memory.governed import GovernedLongTermMemory
-from core.memory.markdown import MarkdownMemoryStore
+from infra.persistence.markdown_memory_store import MarkdownMemoryStore
 from core.memory.runtime import MemoryRuntime
 from core.personal.governance import MemoryGovernanceService
 from core.personal.models import PersonalEntityType, RecordStatus

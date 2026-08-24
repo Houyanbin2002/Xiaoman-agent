@@ -9,6 +9,7 @@ from pathlib import Path
 import keyring
 from mcp.client.auth import TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from pydantic import AnyUrl
 
 
 class McpSecretStore:
@@ -100,7 +101,7 @@ class McpSecretStore:
         client = OAuthClientInformationFull(
             client_id=client_id,
             client_secret=client_secret or None,
-            redirect_uris=[redirect_uri],
+            redirect_uris=[AnyUrl(redirect_uri)],
             token_endpoint_auth_method=(
                 "client_secret_post" if client_secret else "none"
             ),

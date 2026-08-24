@@ -78,7 +78,3 @@ def uninstall():
         _replay.dense_message_candidates = _ORIG["replay"]
         _ORIG.clear()
     _CACHE.clear()
-
-
-def clear_cache():
-    _CACHE.clear()

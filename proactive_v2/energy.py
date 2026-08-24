@@ -10,8 +10,6 @@ proactive/energy.py — 动态电量衰减与主动冲动计算。
 
 贡献函数：
   D_energy  = 1 - energy            互动饥渴度（越久没说话越高）
-  D_recent  = log(1+k)/log(1+scale) 对话语境丰富度（近期消息越多越高）
-
 base_score 越高 → next_tick_from_score 给出的间隔越短 → 越快触发。
 """
 
@@ -57,17 +55,6 @@ def d_energy(energy: float) -> float:
     高电量（刚聊完）→ 贡献小但非零，不再作为硬闸。
     """
     return 1.0 - max(0.0, min(1.0, energy))
-
-
-def d_recent(msg_count: int, scale: float = 10.0) -> float:
-    """对话语境丰富度：近期消息越多 → D_recent 越高。
-
-    对数归一化：D_recent = log(1+k) / log(1+scale)，上限 1.0。
-    scale=10 时：0条→0.00  5条→0.59  10条→0.76  20条→0.92
-    """
-    if msg_count <= 0:
-        return 0.0
-    return min(1.0, math.log1p(max(0, msg_count)) / math.log1p(max(scale, 1.0)))
 
 
 # ── tick 间隔（由 base_score 驱动）──────────────────────────────────

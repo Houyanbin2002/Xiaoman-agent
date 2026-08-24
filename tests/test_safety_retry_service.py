@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from agent.core.passive_turn import DefaultReasoner
 from agent.core.runtime_support import ToolDiscoveryState
-from agent.core.runtime_support import LLMServices
+from agent.looping.ports import LLMServices
 from agent.core.types import ContextRenderResult
 from agent.core.types import ContextRequest
 from agent.core.types import ReasonerResult
@@ -57,7 +57,7 @@ def _make_reasoner(*, discovery: ToolDiscoveryState, tool_search_enabled: bool):
     return DefaultReasoner(
         llm=cast(Any, LLMServices(provider=SimpleNamespace(chat=AsyncMock()), light_provider=SimpleNamespace())),
         llm_config=LLMConfig(model="m", max_iterations=4, max_tokens=256),
-        tools=cast(Any, SimpleNamespace(get_always_on_names=lambda: {"always"}, get_schemas=lambda names=None: [], get_tool=lambda name: None)),
+        tools=cast(Any, SimpleNamespace(get_always_on_names=lambda: {"always"}, get_documents=lambda: [], get_schemas=lambda names=None: [], get_tool=lambda name: None)),
         discovery=discovery,
         tool_search_enabled=tool_search_enabled,
         memory_window=10,
@@ -127,7 +127,7 @@ def test_reasoner_run_turn_context_length_never_drops_prompt_sections():
     reasoner = DefaultReasoner(
         llm=cast(Any, LLMServices(provider=SimpleNamespace(chat=AsyncMock()), light_provider=SimpleNamespace())),
         llm_config=LLMConfig(model="m", max_iterations=4, max_tokens=256),
-        tools=cast(Any, SimpleNamespace(get_always_on_names=lambda: {"always"}, get_schemas=lambda names=None: [], get_tool=lambda name: None)),
+        tools=cast(Any, SimpleNamespace(get_always_on_names=lambda: {"always"}, get_documents=lambda: [], get_schemas=lambda names=None: [], get_tool=lambda name: None)),
         discovery=discovery,
         tool_search_enabled=False,
         memory_window=10,

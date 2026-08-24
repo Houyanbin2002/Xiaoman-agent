@@ -5,11 +5,11 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["static/dashboard/*.js", "plugins/*/dashboard_panel.js"] },
+  { ignores: ["static/dashboard/*.js"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["frontend/dashboard/src/**/*.{ts,tsx}", "plugins/**/*.ts", "types/**/*.d.ts"],
+    files: ["frontend/dashboard/src/**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2021,
       globals: globals.browser,
@@ -22,7 +22,6 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": "off",
       "react-hooks/set-state-in-effect": "off",
-      "@typescript-eslint/triple-slash-reference": "off",
       "@typescript-eslint/no-explicit-any": "error",
     },
   },

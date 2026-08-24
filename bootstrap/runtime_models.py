@@ -7,8 +7,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 from agent.tools.vision import ReadImageVisionTool
+from core.llm import LLMProvider as LLMProviderPort
 from core.net.http import RequestBudget
-from infra.providers.llm_provider import LLMProvider
+from infra.providers.llm_provider import LLMProvider as OpenAICompatibleLLMProvider
 
 from .providers import _sanitize_extra_body
 
@@ -33,10 +34,10 @@ class RuntimeModelService:
         self,
         *,
         config: Any,
-        main_provider: LLMProvider,
-        light_provider: LLMProvider | None,
-        agent_provider: LLMProvider | None,
-        vl_provider: LLMProvider | None,
+        main_provider: LLMProviderPort,
+        light_provider: LLMProviderPort | None,
+        agent_provider: LLMProviderPort | None,
+        vl_provider: LLMProviderPort | None,
         agent_loop: Any,
         memory_runtime: Any,
         plugin_manager: Any | None,
@@ -182,7 +183,10 @@ class RuntimeModelService:
             provider = self._new_provider(slot, update)
             self._set_provider_for_slot(slot, provider)
         else:
-            provider.reconfigure(
+            reconfigure = getattr(provider, "reconfigure", None)
+            if not callable(reconfigure):
+                raise RuntimeError("当前模型 Provider 不支持热更新。")
+            reconfigure(
                 api_key=update.api_key,
                 base_url=update.base_url,
                 provider_name=update.provider,
@@ -232,7 +236,11 @@ class RuntimeModelService:
             output_dimensionality=update.output_dimensionality,
         )
 
-    def _reconfigure_main_consumers(self, provider: LLMProvider, model: str) -> None:
+    def _reconfigure_main_consumers(
+        self,
+        provider: LLMProviderPort,
+        model: str,
+    ) -> None:
         plugin_llm = getattr(self._plugin_manager, "llm", None)
         if plugin_llm is not None and hasattr(plugin_llm, "reconfigure"):
             plugin_llm.reconfigure(provider=provider, model=model)
@@ -242,7 +250,11 @@ class RuntimeModelService:
                 executor.reconfigure(provider=provider, model=model)
         if self._proactive_loop is not None:
             self._proactive_loop.reconfigure_model(provider=provider, model=model)
-    def _reconfigure_vision_tool(self, provider: LLMProvider, model: str) -> None:
+    def _reconfigure_vision_tool(
+        self,
+        provider: LLMProviderPort,
+        model: str,
+    ) -> None:
         tool = self._tools.get_tool("read_image_vision")
         if tool is not None and hasattr(tool, "reconfigure"):
             tool.reconfigure(provider=provider, model=model)
@@ -259,7 +271,7 @@ class RuntimeModelService:
                 search_hint="看图 识图 图片内容 视觉识别 VL",
             )
 
-    def _provider_for_slot(self, slot: str) -> LLMProvider | None:
+    def _provider_for_slot(self, slot: str) -> LLMProviderPort | None:
         return {
             "main": self._main_provider,
             "fast": self._light_provider,
@@ -267,7 +279,7 @@ class RuntimeModelService:
             "vision": self._vl_provider,
         }[slot]
 
-    def _set_provider_for_slot(self, slot: str, provider: LLMProvider) -> None:
+    def _set_provider_for_slot(self, slot: str, provider: LLMProviderPort) -> None:
         attr = {
             "main": "_main_provider",
             "fast": "_light_provider",
@@ -284,8 +296,12 @@ class RuntimeModelService:
             }[slot]
             setattr(self._core_runtime, core_attr, provider)
 
-    def _new_provider(self, slot: str, update: RuntimeModelUpdate) -> LLMProvider:
-        return LLMProvider(
+    def _new_provider(
+        self,
+        slot: str,
+        update: RuntimeModelUpdate,
+    ) -> LLMProviderPort:
+        return OpenAICompatibleLLMProvider(
             api_key=update.api_key,
             base_url=update.base_url,
             system_prompt="" if slot == "vision" else self.config.system_prompt,

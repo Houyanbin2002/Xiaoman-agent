@@ -46,17 +46,3 @@ META_TOOLBOX_GROUPS: tuple[MetaToolGroup, ...] = (
 META_TOOLBOX_NAMES: tuple[str, ...] = tuple(
     name for group in META_TOOLBOX_GROUPS for name, _ in group.tools
 )
-
-
-def build_meta_toolbox_prompt() -> str:
-    lines = [
-        "你有一组始终可见的 MetaToolBox，优先覆盖检索、读写文件、消息回溯、推送和终端执行。",
-        "当任务能被 MetaToolBox 直接完成时，优先使用这组工具，不必先 tool_search。",
-        "",
-    ]
-    for group in META_TOOLBOX_GROUPS:
-        lines.append(f"[{group.title}]")
-        for name, summary in group.tools:
-            lines.append(f"- {name}: {summary}")
-        lines.append("")
-    return "\n".join(lines).strip()

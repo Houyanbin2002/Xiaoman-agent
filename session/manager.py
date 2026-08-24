@@ -3,7 +3,6 @@ import base64
 import json
 import logging
 import mimetypes
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -142,11 +141,6 @@ def _align_to_user_boundary(messages: list[dict[str, Any]]) -> list[dict[str, An
         ):
             return messages[i:]
     return []
-
-
-def _safe_filename(key: str) -> str:
-    """Convert a session key to a safe filename."""
-    return re.sub(r"[^\w\-]", "_", key)
 
 
 @dataclass

@@ -97,61 +97,6 @@ class PersonalProfileData:
 
 
 @dataclass(frozen=True)
-class CommitmentData:
-    title: str
-    details: str = ""
-    state: str = "open"
-    priority: str = "normal"
-    due_at: str | None = None
-    completed_at: str | None = None
-    project: str = ""
-    estimated_minutes: int | None = None
-    energy: str = "medium"
-    contexts: list[str] = field(default_factory=list)
-    progress: float = 0.0
-    postponement_count: int = 0
-    next_action: str = ""
-
-
-@dataclass(frozen=True)
-class HealthObservationData:
-    metric: str
-    value: float | int | str
-    unit: str
-    observed_at: str
-    device: str = ""
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class DailyPlanData:
-    plan_date: str
-    timezone: str = "Asia/Shanghai"
-    state: str = "draft"
-    items: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class CheckInData:
-    check_in_type: str
-    observed_at: str
-    rating: int | None = None
-    note: str = ""
-    dimensions: dict[str, float | int | str] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class NotificationPolicyData:
-    category: str
-    enabled: bool = True
-    channels: list[str] = field(default_factory=lambda: ["dashboard"])
-    quiet_start: str | None = None
-    quiet_end: str | None = None
-    minimum_interval_minutes: int = 30
-    escalation: str = "none"
-
-
-@dataclass(frozen=True)
 class MemoryData:
     kind: MemoryKind
     content: str
@@ -166,18 +111,6 @@ class MemoryData:
 
 
 @dataclass(frozen=True)
-class MonitorObservationData:
-    monitor_key: str
-    source_type: str
-    title: str
-    observed_at: str
-    current_hash: str
-    previous_hash: str = ""
-    changed: bool = False
-    change_summary: str = ""
-
-
-@dataclass(frozen=True)
 class ContextStateData:
     context_type: str
     mode: str
@@ -187,59 +120,6 @@ class ContextStateData:
     do_not_disturb: bool = False
     allow_high_priority: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class RelationshipData:
-    person_name: str
-    relationship: str = ""
-    last_contact_at: str | None = None
-    contact_interval_days: int = 30
-    important: bool = True
-    notes: str = ""
-
-
-@dataclass(frozen=True)
-class ImportantDateData:
-    date: str
-    description: str = ""
-    person_name: str = ""
-    repeat_yearly: bool = True
-    preparation_days: int = 7
-
-
-@dataclass(frozen=True)
-class FinancialObligationData:
-    obligation_type: str
-    due_at: str
-    amount: float | None = None
-    currency: str = "CNY"
-    recurrence: str = "none"
-    auto_renew: bool = False
-    reminder_days: int = 7
-    state: str = "active"
-
-
-@dataclass(frozen=True)
-class TripData:
-    destination: str
-    depart_at: str
-    return_at: str | None = None
-    state: str = "planning"
-    checklist: list[dict[str, Any]] = field(default_factory=list)
-    itinerary: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class GoalData:
-    target: float
-    current: float
-    unit: str
-    start_at: str
-    due_at: str
-    direction: str = "increase"
-    state: str = "active"
-    tracking_key: str = ""
 
 
 @dataclass(frozen=True)

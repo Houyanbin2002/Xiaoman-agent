@@ -449,8 +449,13 @@ def build_execution_state(
         if isinstance(raw_evidence_refs, list)
         else ()
     )
+    raw_confidence = payload.get("extraction_confidence")
     try:
-        extraction_confidence = float(payload.get("extraction_confidence") or 0.0)
+        extraction_confidence = (
+            float(raw_confidence)
+            if isinstance(raw_confidence, (str, int, float))
+            else 0.0
+        )
     except (TypeError, ValueError):
         extraction_confidence = 0.0
     try:

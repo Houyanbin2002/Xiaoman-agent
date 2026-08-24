@@ -33,20 +33,3 @@ class PresenceStore:
     def get_last_user_at(self, session_key: str) -> datetime | None:
         row = self._store.get_presence(session_key) or {}
         return _parse_iso(row.get("last_user_at"))
-
-    def get_last_proactive_at(self, session_key: str) -> datetime | None:
-        row = self._store.get_presence(session_key) or {}
-        return _parse_iso(row.get("last_proactive_at"))
-
-    def most_recent_user_at(self) -> datetime | None:
-        return _parse_iso(self._store.most_recent_user_at())
-
-    def get_all_sessions(self) -> dict[str, dict[str, datetime | None]]:
-        rows = self._store.list_presence()
-        return {
-            key: {
-                "last_user_at": _parse_iso(item.get("last_user_at")),
-                "last_proactive_at": _parse_iso(item.get("last_proactive_at")),
-            }
-            for key, item in rows.items()
-        }

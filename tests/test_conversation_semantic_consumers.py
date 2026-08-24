@@ -9,7 +9,7 @@ from bus.event_bus import EventBus
 from core.attention.semantic_consumer import ConversationAttentionBatchConsumer
 from core.conversation_semantics.events import ConversationSemanticBatchCommitted
 from core.conversation_semantics.models import SemanticBatchPayload
-from core.memory.markdown import MarkdownMemoryStore
+from infra.persistence.markdown_memory_store import MarkdownMemoryStore
 from core.memory.markdown import (
     ConsolidateRequest,
     MarkdownMemoryMaintenance,
@@ -121,8 +121,6 @@ async def test_memory_consumer_writes_history_candidates_and_context_once(
     tmp_path,
 ) -> None:
     markdown = MarkdownMemoryStore(tmp_path)
-    session = _Session()
-    saved: list[int] = []
     candidate_refs: set[str] = set()
     candidates: list[dict[str, object]] = []
 
@@ -132,14 +130,9 @@ async def test_memory_consumer_writes_history_candidates_and_context_once(
         candidate_refs.add(source_ref)
         candidates.extend(dict(item) for item in items)
 
-    async def save_session(value: _Session) -> None:
-        saved.append(value.last_consolidated)
-
     consumer = ConversationMemoryBatchConsumer(
         markdown=markdown,
         candidate_sink=candidate_sink,
-        get_session=lambda _key: session,
-        save_session=save_session,
     )
 
     await consumer.handle(_event())
@@ -162,8 +155,6 @@ async def test_memory_consumer_writes_history_candidates_and_context_once(
         }
     ]
     assert "用户周五前交报告" in markdown.read_recent_context()
-    assert session.last_consolidated == 0
-    assert saved == []
 
 
 @pytest.mark.asyncio
@@ -197,8 +188,6 @@ async def test_memory_consumer_never_treats_assistant_message_as_user_confirmati
     consumer = ConversationMemoryBatchConsumer(
         markdown=MarkdownMemoryStore(tmp_path),
         candidate_sink=lambda items, **_kwargs: observed.extend(items),
-        get_session=lambda _key: _Session(),
-        save_session=lambda _value: None,
     )
 
     await consumer.handle(event)

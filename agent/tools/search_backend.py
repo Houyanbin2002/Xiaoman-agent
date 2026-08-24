@@ -13,21 +13,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Set as AbstractSet
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from agent.tools.registry import ToolDocument
+from agent.tools.catalog_models import ToolDocument
 
 
 class SearchBackend(ABC):
     """工具目录搜索后端接口。"""
 
     @abstractmethod
-    def rebuild(self, documents: list["ToolDocument"]) -> None:
+    def rebuild(self, documents: list[ToolDocument]) -> None:
         """用给定文档列表重建全量索引。"""
 
     @abstractmethod
-    def add(self, document: "ToolDocument") -> None:
+    def add(self, document: ToolDocument) -> None:
         """增量添加一个工具文档到索引（动态注册用）。"""
 
     @abstractmethod
@@ -57,12 +56,12 @@ class KeywordSearchBackend(SearchBackend):
     """基于字段加权 + 字符级 substring 的关键词搜索后端。"""
 
     def __init__(self) -> None:
-        self._docs: dict[str, "ToolDocument"] = {}
+        self._docs: dict[str, ToolDocument] = {}
 
-    def rebuild(self, documents: list["ToolDocument"]) -> None:
+    def rebuild(self, documents: list[ToolDocument]) -> None:
         self._docs = {doc.name: doc for doc in documents}
 
-    def add(self, document: "ToolDocument") -> None:
+    def add(self, document: ToolDocument) -> None:
         self._docs[document.name] = document
 
     def remove(self, name: str) -> None:
@@ -113,7 +112,7 @@ class KeywordSearchBackend(SearchBackend):
 # ── 内部工具函数 ───────────────────────────────────────────────────────────────
 
 
-def _doc_to_result(doc: "ToolDocument", why_matched: list[str]) -> dict[str, Any]:
+def _doc_to_result(doc: ToolDocument, why_matched: list[str]) -> dict[str, Any]:
     """将 ToolDocument 转为 search() 标准返回格式。"""
     return {
         "name": doc.name,
@@ -163,7 +162,7 @@ def _default_normalize(query: str) -> set[str]:
     return tokens
 
 
-def _score(doc: "ToolDocument", keywords: set[str]) -> int:
+def _score(doc: ToolDocument, keywords: set[str]) -> int:
     """给单个工具文档打分（纯 int score，不生成解释）。
 
     名称 parts 匹配（最高权重，MCP 工具额外 +2）：
@@ -200,7 +199,7 @@ def _score(doc: "ToolDocument", keywords: set[str]) -> int:
     return score
 
 
-def _explain(doc: "ToolDocument", keywords: set[str]) -> list[str]:
+def _explain(doc: ToolDocument, keywords: set[str]) -> list[str]:
     """生成 why_matched 解释（与 _score 解耦）。"""
     name_parts = [p for p in doc.name.lower().split("_") if p]
     name_lower = doc.name.lower()

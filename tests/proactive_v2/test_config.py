@@ -3,19 +3,12 @@ TDD — Phase 2: proactive/config.py v2 新字段
 
 测试覆盖：
   - 新增 v2 字段的默认值
-  - v2-only 语义（不再存在 use_agent_tick）
   - 复用 v1 已有字段（不重复定义）
   - 字段类型正确
 """
 
 
 from proactive_v2.config import ProactiveConfig
-
-
-# ── v2-only ───────────────────────────────────────────────────────────────
-
-def test_use_agent_tick_removed():
-    assert not hasattr(ProactiveConfig(), "use_agent_tick")
 
 
 # ── agent loop ───────────────────────────────────────────────────────────
@@ -86,10 +79,6 @@ def test_drift_enabled_default_false():
 
 def test_drift_max_steps_default():
     assert ProactiveConfig().drift_max_steps == 8
-
-
-def test_drift_dir_removed():
-    assert not hasattr(ProactiveConfig(), "drift_dir")
 
 
 def test_drift_min_interval_hours_default():

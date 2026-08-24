@@ -7,7 +7,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .models import MarketplaceField, MarketplaceItem
+from .models import MarketplaceField, MarketplaceInstallMode, MarketplaceItem
 
 _REGISTRY_BASE_URL = "https://registry.modelcontextprotocol.io/v0.1/servers"
 _REGISTRY_TIMEOUT_SECONDS = 20
@@ -246,7 +246,12 @@ def _parse_server(
 
 def _installation(
     server: dict[str, Any],
-) -> tuple[str, dict[str, Any], tuple[MarketplaceField, ...], str]:
+) -> tuple[
+    MarketplaceInstallMode,
+    dict[str, Any],
+    tuple[MarketplaceField, ...],
+    str,
+]:
     remotes = server.get("remotes")
     if isinstance(remotes, list):
         for remote in remotes:
@@ -258,7 +263,7 @@ def _installation(
                 continue
             auth_type = _auth_type(remote)
             fields = _configuration_fields(remote.get("headers"))
-            mode = (
+            mode: MarketplaceInstallMode = (
                 "configure"
                 if fields
                 else "oauth"
@@ -290,7 +295,7 @@ def _installation(
             identifier = str(package.get("identifier", "")).strip()
             version = str(package.get("version") or server.get("version") or "").strip()
             fields = _configuration_fields(package.get("environmentVariables"))
-            mode = "configure" if fields else "direct"
+            mode: MarketplaceInstallMode = "configure" if fields else "direct"
             if registry == "npm" and identifier:
                 spec: dict[str, Any] = {
                     "transport": "stdio",

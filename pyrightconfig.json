@@ -11,6 +11,7 @@
     "core",
     "infra",
     "memory2",
+    "plugins",
     "proactive_v2",
     "prompts",
     "session"

@@ -892,7 +892,7 @@ class AttentionEngineStore:
                     raise RuntimeError("attention engine store is closed")
                 return store._db
 
-            def __exit__(self, exc_type, exc, traceback):
+            def __exit__(self, exc_type, exc, _traceback):
                 try:
                     if exc_type is None:
                         store._db.commit()

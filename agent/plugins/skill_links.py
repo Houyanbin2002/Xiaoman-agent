@@ -366,34 +366,6 @@ class PluginSkillLinker:
         )
 
 
-def remove_plugin_skill_materializations(
-    *,
-    workspace: Path,
-    plugin_root: Path,
-) -> int:
-    """Remove workspace links or managed copies owned by one plugin."""
-    removed = 0
-    normalized_root = plugin_root.resolve(strict=False)
-    for skills_dir in (workspace / "skills", workspace / "drift" / "skills"):
-        if not skills_dir.is_dir():
-            continue
-        for item in list(skills_dir.iterdir()):
-            target = (
-                _readlink_target(item)
-                if item.is_symlink()
-                else _managed_copy_target(item)
-            )
-            if target is None:
-                continue
-            try:
-                target.resolve(strict=False).relative_to(normalized_root)
-            except ValueError:
-                continue
-            if _remove_existing_path(item):
-                removed += 1
-    return removed
-
-
 def parse_skill_policy(
     plugin_id: str,
     manifest: Mapping[str, object],
@@ -513,13 +485,6 @@ def _remove_existing_path(path: Path) -> bool:
         logger.warning("插件 skill 覆盖旧路径失败 (%s): %s", path, e)
         return False
     return True
-
-
-def _managed_copy_target(path: Path) -> Path | None:
-    metadata = read_managed_skill_copy_marker(path)
-    if metadata is None:
-        return None
-    return Path(metadata["target"]).resolve(strict=False)
 
 
 def _directory_fingerprint(root: Path) -> str:

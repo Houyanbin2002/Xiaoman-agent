@@ -543,62 +543,6 @@ class WorkflowStore:
             if (workflow := self.get_workflow(workflow_id)) is not None
         ]
 
-    def claim_runnable_steps(
-        self, *, limit: int = 3
-    ) -> list[tuple[WorkflowInstance, WorkflowStep]]:
-        claimed: list[tuple[str, str]] = []
-        now = _now()
-        with self._transaction() as db:
-            workflow_rows = db.execute(
-                "SELECT id FROM workflows WHERE status = ? ORDER BY updated_at",
-                (WorkflowStatus.RUNNING.value,),
-            ).fetchall()
-            for workflow_row in workflow_rows:
-                if len(claimed) >= max(1, int(limit)):
-                    break
-                workflow_id = str(workflow_row["id"])
-                steps = self._load_steps(db, workflow_id)
-                statuses = {step.id: step.status for step in steps}
-                for step in steps:
-                    if len(claimed) >= max(1, int(limit)):
-                        break
-                    if step.kind != StepKind.AGENT or step.status != StepStatus.PENDING:
-                        continue
-                    if step.next_run_at and step.next_run_at > now:
-                        continue
-                    if not self._deps_satisfied(step, statuses):
-                        continue
-                    cursor = db.execute(
-                        """
-                        UPDATE workflow_steps
-                        SET status = ?, attempt_count = attempt_count + 1,
-                            next_run_at = NULL, updated_at = ?
-                        WHERE workflow_id = ? AND id = ? AND status = ?
-                        """,
-                        (
-                            StepStatus.RUNNING.value,
-                            now,
-                            workflow_id,
-                            step.id,
-                            StepStatus.PENDING.value,
-                        ),
-                    )
-                    if cursor.rowcount != 1:
-                        continue
-                    self._record_event(
-                        db,
-                        workflow_id,
-                        "step_started",
-                        {"step_id": step.id, "attempt": step.attempt_count + 1},
-                    )
-                    claimed.append((workflow_id, step.id))
-                    statuses[step.id] = StepStatus.RUNNING
-        return [
-            (workflow, self._require_step(workflow, step_id))
-            for workflow_id, step_id in claimed
-            if (workflow := self.get_workflow(workflow_id)) is not None
-        ]
-
     def claim_workflow_steps(
         self,
         workflow_id: str,

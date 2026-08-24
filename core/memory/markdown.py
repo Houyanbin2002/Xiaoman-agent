@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Protocol, runtime_checkable
-
-from agent.memory import MemoryStore
 
 @dataclass(frozen=True)
 class ConsolidateRequest:
@@ -31,8 +28,29 @@ class MemoryProfileApi(Protocol):
     def get_memory_context(self) -> str: ...
 
 
-class MarkdownMemoryStore(MemoryStore):
-    pass
+class MarkdownStoreApi(Protocol):
+    """Markdown 支持文件端口；具体文件/SQLite 实现在 infra。"""
+
+    def read_self(self) -> str: ...
+
+    def read_recent_context(self) -> str: ...
+
+    def append_history_once(
+        self,
+        entry: str,
+        *,
+        source_ref: str,
+        kind: str = "history_entry",
+    ) -> bool: ...
+
+    def write_recent_context(self, content: str) -> None: ...
+
+    def build_recent_activity_context(
+        self,
+        *,
+        max_entries: int = 18,
+        max_chars: int = 4500,
+    ) -> str: ...
 
 
 class MarkdownMemoryMaintenance:
@@ -63,14 +81,5 @@ class MarkdownMemoryMaintenance:
 
 @dataclass
 class MarkdownMemoryRuntime:
-    store: MarkdownMemoryStore
+    store: MarkdownStoreApi
     maintenance: MarkdownMemoryMaintenance
-
-
-def build_markdown_memory_runtime(
-    *,
-    workspace: Path,
-) -> MarkdownMemoryRuntime:
-    store = MarkdownMemoryStore(workspace)
-    maintenance = MarkdownMemoryMaintenance()
-    return MarkdownMemoryRuntime(store=store, maintenance=maintenance)

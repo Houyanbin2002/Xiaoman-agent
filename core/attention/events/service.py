@@ -7,7 +7,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from agent.scheduler import ScheduledJob, ScheduledJobChanged
 from core.attention._shared import parse_datetime
 from core.attention.events.models import (
     CanonicalEntity,
@@ -25,6 +24,7 @@ from core.conversation_semantics.events import ConversationSemanticBatchCommitte
 from core.conversation_semantics.models import TaskEventCandidate
 from core.personal.events import PersonalRecordChanged
 from core.personal.models import PersonalEntityType, PersonalRecord, RecordStatus
+from core.scheduling import ScheduledJob, ScheduledJobChanged
 
 _ATTENTION_ENTITY_TYPES = frozenset(
     {

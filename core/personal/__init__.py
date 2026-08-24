@@ -1,14 +1,8 @@
 from core.personal.models import (
     AccessPolicy,
-    CheckInData,
-    CommitmentData,
     DataCategory,
-    DailyPlanData,
-    HealthObservationData,
     MemoryData,
     MemoryKind,
-    MonitorObservationData,
-    NotificationPolicyData,
     PersonalEntityType,
     PersonalProfileData,
     PersonalRecord,
@@ -18,13 +12,6 @@ from core.personal.models import (
     SensitivityLevel,
 )
 from core.personal.service import PersonalDataService
-from core.personal.events import (
-    EventStatus,
-    OperationAuditEntry,
-    OperationReceipt,
-    OperationStatus,
-    PersonalEvent,
-)
 from core.personal.governance import (
     MemoryConflict,
     MemoryConflictAction,
@@ -33,28 +20,17 @@ from core.personal.governance import (
     MemoryProposalResult,
 )
 __all__ = [
-    "CheckInData",
     "AccessPolicy",
     "DataCategory",
-    "CommitmentData",
-    "DailyPlanData",
-    "EventStatus",
-    "HealthObservationData",
     "MemoryData",
     "MemoryConflict",
     "MemoryConflictAction",
     "MemoryConflictStatus",
     "MemoryGovernanceService",
     "MemoryKind",
-    "MonitorObservationData",
     "MemoryProposalResult",
-    "NotificationPolicyData",
-    "OperationAuditEntry",
-    "OperationReceipt",
-    "OperationStatus",
     "PersonalDataService",
     "PersonalEntityType",
-    "PersonalEvent",
     "PersonalProfileData",
     "PersonalRecord",
     "RecordRevision",

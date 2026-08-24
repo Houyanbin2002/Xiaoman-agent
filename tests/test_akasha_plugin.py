@@ -24,18 +24,19 @@ from plugins.akasha.engine import (
     AkashaMemoryEngine,
     PendingActivation,
     _AkashaRetrieval,
-    _compute_candidates,
     _load_turn_card,
 )
 from plugins.akasha.core import (
     AkashaNode,
+    CoreConfig,
     activation_edge_updates,
     build_dense_message_index,
+    compute_candidates,
     dense_message_candidates,
     reinforce_boost_from_payload,
 )
 from plugins.akasha.plugin import AkashaPlugin
-from plugins.akasha.replay import AkashaReplayRuntime, ReplayMessage, _turn_messages
+from plugins.akasha.replay import AkashaReplayRuntime, ReplayMessage
 from plugins.akasha.store import (
     ActivationEventRow,
     AkashaStore,
@@ -580,14 +581,18 @@ def test_query_log_content_loader_allows_empty_user_message(tmp_path: Path) -> N
             ],
         )
         db.commit()
-        user_message, assistant_preview = _turn_messages(
-            db.cursor(),
-            "s:0",
-            assistant_preview_chars=9,
-        )
+    card = _load_turn_card(
+        db_path,
+        "s:0",
+        assistant_preview_chars=9,
+        score=1.0,
+        lane="test",
+        signals={},
+    )
 
-    assert user_message == ""
-    assert assistant_preview == "assistant..."
+    assert card is not None
+    assert card.user_message == ""
+    assert card.assistant_preview == "assistant..."
 
 
 def test_akasha_rebuild_skips_scheduler_messages() -> None:
@@ -916,13 +921,13 @@ def test_compute_candidates_uses_activation_limit_for_stateful_replay(tmp_path: 
     finally:
         store.close()
 
-    candidates, suppressed, trace = _compute_candidates(
+    candidates, suppressed, trace = compute_candidates(
         "消息",
         np.array([1.0, 0.0], dtype=np.float32),
         nodes,
         {},
         100,
-        config=AkashaConfig(dense_top_k=30, activate_limit=8),
+        config=CoreConfig(dense_top_k=30, activate_limit=8),
         fan={},
         soft_recall=False,
         return_limit=8,

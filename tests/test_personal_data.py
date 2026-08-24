@@ -7,7 +7,6 @@ import sqlite3
 import pytest
 
 from core.personal.models import (
-    CommitmentData,
     MemoryData,
     MemoryKind,
     PersonalEntityType,
@@ -79,7 +78,7 @@ def test_profile_and_typed_personal_records_share_governed_envelope(tmp_path: Pa
         entity_type=PersonalEntityType.COMMITMENT,
         title="Finish architecture review",
         summary="Review the personal assistant boundaries",
-        data=CommitmentData(title="Finish architecture review", priority="high"),
+        data={"title": "Finish architecture review", "priority": "high"},
         source=RecordSource("chat", "dashboard:test:42"),
         confidence=0.9,
     )

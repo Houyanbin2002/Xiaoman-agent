@@ -14,8 +14,6 @@ __all__ = [
     "utcnow",
     "parse_iso",
     "safe_zone",
-    "format_iso",
-    "local_now",
 ]
 
 
@@ -43,13 +41,6 @@ def parse_iso(ts: str | None) -> datetime | None:
         return None
 
 
-def format_iso(dt: datetime) -> str:
-    """将 datetime 序列化为 ISO 8601 字符串（带时区）。"""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.isoformat()
-
-
 def safe_zone(name: str, *, logger=None) -> ZoneInfo:
     """
     解析时区名称，非法时区回退到 UTC。
@@ -64,17 +55,3 @@ def safe_zone(name: str, *, logger=None) -> ZoneInfo:
         if logger is not None:
             logger.warning("[timekit] 无效时区 %r，回退到 UTC", name)
         return ZoneInfo("UTC")
-
-
-def local_now(tz: ZoneInfo | str | None = None) -> datetime:
-    """
-    返回本地化当前时间。
-
-    Args:
-        tz: 时区对象或名称字符串，None 时使用系统本地时区。
-    """
-    if tz is None:
-        return datetime.now().astimezone()
-    if isinstance(tz, str):
-        tz = safe_zone(tz)
-    return datetime.now(tz)

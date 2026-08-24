@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from agent.core.passive_support import collect_skill_mentions
-from agent.core.passive_turn import DefaultReasoner
 from prompts.agent import build_current_message_time_envelope
 import agent.looping.core as loop_core
 from agent.looping.core import AgentLoop
@@ -25,6 +24,7 @@ def _make_loop(tmp_path: Path) -> AgentLoop:
         SimpleNamespace(
             engine=memory,
             markdown=SimpleNamespace(store=memory, maintenance=memory),
+            profile=memory,
         ),
     )
     return AgentLoop(
@@ -60,12 +60,6 @@ def test_collect_skill_mentions_ignores_unknown_skill(tmp_path):
     got = collect_skill_mentions("$known $unknown", skills)
 
     assert got == ["known"]
-
-
-def test_format_request_time_anchor_contains_iso_and_label():
-    text = DefaultReasoner.format_request_time_anchor(None)
-    assert text.startswith("request_time=")
-    assert "(" in text and ")" in text
 
 
 def test_build_current_message_time_envelope_contains_today_and_tomorrow():

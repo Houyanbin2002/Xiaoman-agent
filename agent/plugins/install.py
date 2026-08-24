@@ -53,17 +53,6 @@ def xiaoman_plugins_root() -> Path:
     return Path.home() / ".xiaoman-plugin"
 
 
-def installed_cache_root() -> Path:
-    return xiaoman_plugins_root() / "cache"
-
-
-def plugin_data_root(
-    plugin_name: str,
-    marketplace: str,
-) -> Path:
-    return xiaoman_plugins_root() / "data" / f"{plugin_name}-{marketplace}"
-
-
 def install_git_plugin(
     *,
     source: str,

@@ -9,10 +9,12 @@ from datetime import datetime
 import json
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from memory2.store import MemoryStore2
 from memory2.embedder import Embedder
+from memory2.models import MemoryHit
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,7 @@ class Retriever:
         time_end: datetime | None = None,
         keyword_enabled: bool = True,
         hotness_alpha: float | None = None,
-    ) -> list[dict]:
+    ) -> list[MemoryHit]:
         # 1. query 与辅助 query 一起进入向量 lane，避免多入口语义漂移。
         actual_top_k = self._top_k if top_k is None else max(1, int(top_k))
         actual_threshold = (
@@ -117,7 +119,7 @@ class Retriever:
         )
 
         # 2. 关键词 lane 只用原始 query，保留用户字面命中的召回能力。
-        keyword_items: list[dict] = []
+        keyword_items: list[MemoryHit] = []
         if keyword_enabled:
             keyword_items = self._retrieve_keyword_lane(
                 query,
@@ -154,13 +156,13 @@ class Retriever:
         time_start: datetime | None,
         time_end: datetime | None,
         hotness_alpha: float | None,
-    ) -> list[dict]:
+    ) -> list[MemoryHit]:
         if not query_texts:
             return []
         vectors = await self._embed_lanes(query_texts)
         if not vectors:
             return []
-        hit_groups: list[list[dict]] = []
+        hit_groups: list[list[MemoryHit]] = []
         actual_hotness_alpha = (
             self._hotness_alpha
             if hotness_alpha is None
@@ -183,7 +185,7 @@ class Retriever:
         except Exception as e:
             logger.debug("memory2 retrieve: vector_search_batch failed: %s", e)
 
-        seen: dict[str, dict] = {}
+        seen: dict[str, MemoryHit] = {}
         if hit_groups:
             for hits in hit_groups:
                 for hit in hits:
@@ -242,7 +244,7 @@ class Retriever:
         require_scope_match: bool,
         time_start: datetime | None,
         time_end: datetime | None,
-    ) -> list[dict]:
+    ) -> list[MemoryHit]:
         terms = _extract_terms(query)
         if not terms:
             return []
@@ -261,32 +263,7 @@ class Retriever:
         """仅做 embedding，不触发 vector_search。"""
         return await self._embedder.embed(query)
 
-    async def retrieve_with_vec(
-        self,
-        query_vec: list[float],
-        memory_types: list[str] | None = None,
-        top_k: int | None = None,
-        scope_channel: str | None = None,
-        scope_chat_id: str | None = None,
-        require_scope_match: bool = False,
-    ) -> list[dict]:
-        """复用已有 query_vec 做本地 vector_search，跳过 embedding 步骤。"""
-        actual_top_k = self._top_k if top_k is None else max(1, int(top_k))
-        items = self._store.vector_search(
-            query_vec=query_vec,
-            top_k=actual_top_k,
-            memory_types=memory_types,
-            score_threshold=self._score_threshold,
-            scope_channel=scope_channel,
-            scope_chat_id=scope_chat_id,
-            require_scope_match=require_scope_match,
-            hotness_alpha=self._hotness_alpha,
-            hotness_half_life_days=self._hotness_half_life_days,
-        )
-        logger.debug(f"memory2 retrieve_with_vec: hits={len(items)}")
-        return items
-
-    def build_injection_block(self, items: list[dict]) -> tuple[str, list[str]]:
+    def build_injection_block(self, items: list[MemoryHit]) -> tuple[str, list[str]]:
         """单次流程：筛选条目 → 分段格式化 → 应用字符预算。"""
         selected, forced, norms, events = self._select_injection_sections(items)
         if not selected:
@@ -295,27 +272,24 @@ class Retriever:
         parts = self._build_section_parts(forced, norms, events)
         return self._apply_char_budget(parts, has_forced=bool(forced))
 
-    def _select_for_injection(self, items: list[dict]) -> list[dict]:
-        selected, _forced, _norms, _events = self._select_injection_sections(items)
-        return selected
-
     def _select_injection_sections(
         self,
-        items: list[dict],
-    ) -> tuple[list[dict], list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]]]:
+        items: list[MemoryHit],
+    ) -> tuple[
+        list[MemoryHit],
+        list[tuple[str, str]],
+        list[tuple[str, str]],
+        list[tuple[str, str]],
+    ]:
         """1. 筛选条目 2. 按段落准备格式化文本。"""
         if not items:
             return [], [], [], []
 
-        sorted_items = sorted(
-            [i for i in items if isinstance(i, dict)],
-            key=lambda x: float(x.get("score", 0.0) or 0.0),
-            reverse=True,
-        )
+        sorted_items = sorted(items, key=_hit_score, reverse=True)
         if not sorted_items:
             return [], [], [], []
 
-        selected: list[dict] = []
+        selected: list[MemoryHit] = []
         forced: list[tuple[str, str]] = []
         norms: list[tuple[str, str]] = []
         events: list[tuple[str, str]] = []
@@ -324,8 +298,8 @@ class Retriever:
         event_count = 0
         for item in sorted_items:
             mtype = str(item.get("memory_type", "") or "")
-            score = float(item.get("score", 0.0) or 0.0)
-            extra = item.get("extra_json") or {}
+            score = _hit_score(item)
+            extra = _as_object_mapping(item.get("extra_json"))
             item_id = str(item.get("id", "") or "")
             summary = str(item.get("summary", "") or "").strip()
             happened_at = item.get("happened_at") or ""
@@ -340,8 +314,10 @@ class Retriever:
                 item["forced"] = True
                 selected.append(item)
                 if summary:
-                    tool_req = extra.get("tool_requirement")
-                    forced.append((item_id, f"- [{item_id}] {summary}（必须调用工具：{tool_req}）"))
+                    tool_req = str(extra.get("tool_requirement") or "")
+                    forced.append(
+                        (item_id, f"- [{item_id}] {summary}（必须调用工具：{tool_req}）")
+                    )
                 continue
             type_th = self._score_thresholds.get(mtype, self._score_threshold)
             if score < type_th:
@@ -364,7 +340,7 @@ class Retriever:
                 confidence_label = "有印象，不确定"
             item["confidence_label"] = confidence_label
             if mtype == "procedure":
-                steps = extra.get("steps") or []
+                steps = _as_object_sequence(extra.get("steps"))
                 if steps:
                     step_text = "；".join(str(s) for s in steps)
                     norms.append(
@@ -470,9 +446,22 @@ def _dedupe_texts(texts: list[str]) -> list[str]:
     return result
 
 
+def _as_object_mapping(value: object) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    raw = cast(Mapping[object, object], value)
+    return {str(key): item for key, item in raw.items()}
+
+
+def _as_object_sequence(value: object) -> Sequence[object]:
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return cast(Sequence[object], value)
+    return ()
+
+
 def _remember_vector_hit(
-    seen: dict[str, dict],
-    hit: dict,
+    seen: dict[str, MemoryHit],
+    hit: MemoryHit,
 ) -> None:
     hit_id = _hit_id(hit)
     hit_score = _hit_score(hit)
@@ -481,11 +470,11 @@ def _remember_vector_hit(
         seen[hit_id] = hit
 
 
-def _hit_id(item: dict) -> str:
+def _hit_id(item: MemoryHit) -> str:
     return str(item.get("id", "") or "")
 
 
-def _hit_score(item: dict, fallback_key: str = "score") -> float:
+def _hit_score(item: MemoryHit, fallback_key: str = "score") -> float:
     raw = item.get(fallback_key)
     if raw is None and fallback_key != "score":
         raw = item.get("score")
@@ -528,12 +517,12 @@ def _extract_terms(query: str) -> list[str]:
 
 
 def _rrf_merge(
-    vector_items: list[dict],
-    keyword_items: list[dict],
+    vector_items: list[MemoryHit],
+    keyword_items: list[MemoryHit],
     *,
     top_n: int,
     k: int = _RRF_K,
-) -> list[dict]:
+) -> list[MemoryHit]:
     vec_rank: dict[str, int] = {}
     for index, item in enumerate(sorted(vector_items, key=_hit_score, reverse=True)):
         item_id = _hit_id(item)
@@ -546,7 +535,7 @@ def _rrf_merge(
         if item_id and item_id not in keyword_rank:
             keyword_rank[item_id] = index + 1
 
-    id_to_item: dict[str, dict] = {}
+    id_to_item: dict[str, MemoryHit] = {}
     for item in keyword_items:
         item_id = _hit_id(item)
         if item_id:
@@ -569,7 +558,7 @@ def _rrf_merge(
         scored.append((item_id, rrf_score, _hit_score(id_to_item.get(item_id, {}))))
 
     scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
-    result: list[dict] = []
+    result: list[MemoryHit] = []
     for item_id, rrf_score, _score in scored[:top_n]:
         item = dict(id_to_item[item_id])
         item["rrf_score"] = rrf_score
@@ -589,7 +578,7 @@ def _format_source_tag(source_ref: str | None) -> str:
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, list):
-            ids = [str(i) for i in parsed if i]
+            ids = [str(item) for item in cast(list[object], parsed) if item]
     except (json.JSONDecodeError, ValueError):
         if raw:
             ids = [raw]
@@ -601,7 +590,7 @@ def _format_source_tag(source_ref: str | None) -> str:
 
 
 def _format_memory_meta(
-    item: dict,
+    item: MemoryHit,
     memory_type: str,
     *,
     confidence_label: str = "",
@@ -617,7 +606,7 @@ def _format_memory_meta(
         if age:
             parts.append(age)
     source_ref = item.get("source_ref")
-    src_tag = _format_source_tag(source_ref)
+    src_tag = _format_source_tag(str(source_ref) if source_ref else None)
     if src_tag:
         parts.append("证据: 可回源原文")
         parts.append(src_tag.strip())

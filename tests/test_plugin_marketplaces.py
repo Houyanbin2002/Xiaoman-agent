@@ -8,7 +8,6 @@ from pathlib import Path
 from agent.plugins.marketplaces import (
     add_marketplace,
     install_marketplace_plugin,
-    list_marketplace_plugins,
     list_marketplaces,
     refresh_marketplace,
 )
@@ -49,15 +48,6 @@ def test_marketplace_installs_a_relative_plugin_and_refreshes_catalog(
             "owner": "Test Team",
         }
     ]
-    assert list_marketplace_plugins("team-tools", plugins_home=home) == [
-        {
-            "name": "feed",
-            "description": "订阅源管理",
-            "version": "1.0.0",
-            "tags": ["mcp"],
-        }
-    ]
-
     installed = install_marketplace_plugin(
         marketplace="team-tools",
         plugin_name="feed",

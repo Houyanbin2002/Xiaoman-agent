@@ -37,6 +37,12 @@ _ARGUMENT_KEYS = frozenset(
 )
 
 
+def _mapping_items(value: object) -> tuple[Mapping[str, object], ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, Mapping))
+
+
 @dataclass(frozen=True)
 class SemanticEvidenceBatch:
     """Bounded, sanitized evidence passed to the shared semantic analyzer."""
@@ -58,12 +64,8 @@ class SemanticEvidenceBatch:
             dict.fromkeys(
                 str(call.get("tool") or "").strip().lower()
                 for episode in self.execution_episodes
-                for call in (
-                    episode.get("calls")
-                    if isinstance(episode.get("calls"), list)
-                    else []
-                )
-                if isinstance(call, Mapping) and str(call.get("tool") or "").strip()
+                for call in _mapping_items(episode.get("calls"))
+                if str(call.get("tool") or "").strip()
             )
         )
 
@@ -142,8 +144,7 @@ def _execution_episode(
         call
         for group in raw_chain
         if isinstance(group, Mapping)
-        for call in (group.get("calls") if isinstance(group.get("calls"), list) else [])
-        if isinstance(call, Mapping)
+        for call in _mapping_items(group.get("calls"))
     ][:12]
     if not raw_calls:
         return None

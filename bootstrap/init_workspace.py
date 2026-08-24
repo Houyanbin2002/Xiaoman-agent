@@ -5,7 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.config import Config
-from agent.memory import DEFAULT_SELF_MD, MemoryStore
+from infra.persistence.markdown_memory_store import (
+    DEFAULT_SELF_MD,
+    MarkdownMemoryStore,
+)
 from bootstrap.memory import ensure_memory_plugin_storage
 from infra.persistence.json_store import save_json
 from proactive_v2.anyaction import QuotaStore
@@ -138,7 +141,7 @@ def _ensure_workspace_db_assets(
 
     consolidation_db = workspace / "memory" / "consolidation_writes.db"
     consolidation_exists = consolidation_db.exists()
-    MemoryStore(workspace)
+    MarkdownMemoryStore(workspace)
     if not consolidation_exists:
         summary.created.append(consolidation_db)
     else:

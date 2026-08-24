@@ -152,7 +152,7 @@ class SkillsCatalogPromptBlock:
         else:
             # Compatibility for third-party ContextBuilder implementations.
             summary = ctx.skills.build_skills_summary()
-        return summary or None
+        return summary if isinstance(summary, str) and summary else None
 
 
 class SelfModelPromptBlock:

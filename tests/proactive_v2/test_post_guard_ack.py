@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent.core.proactive_turn import (
+from proactive_v2.modules_resolve import (
     ack_discarded,
     ack_on_success,
     ack_post_guard_fail,
@@ -828,7 +828,6 @@ async def test_discarded_content_not_in_interesting():
 @pytest.mark.asyncio
 async def test_ack_on_success_alert_cited_calls_alert_ack_fn():
     """发送成功：cited alert 调用 alert_ack_fn（独立通道），不调用普通 ack_fn"""
-    from agent.core.proactive_turn import ack_on_success
     ctx = AgentTickContext()
     ctx.fetched_alerts = [{"id": "a1", "ack_server": "alert-mcp"}]
     ctx.fetched_contents = []
@@ -847,7 +846,6 @@ async def test_ack_on_success_alert_cited_calls_alert_ack_fn():
 @pytest.mark.asyncio
 async def test_ack_on_success_alert_ack_fn_none_falls_back_to_regular():
     """alert_ack_fn=None 时，cited alert 回退到普通 ack_fn（168h）"""
-    from agent.core.proactive_turn import ack_on_success
     ctx = AgentTickContext()
     ctx.fetched_alerts = [{"id": "a1", "ack_server": "alert-mcp"}]
     ctx.fetched_contents = []
@@ -864,7 +862,6 @@ async def test_ack_on_success_alert_ack_fn_none_falls_back_to_regular():
 @pytest.mark.asyncio
 async def test_ack_on_success_content_unaffected_by_alert_ack_fn():
     """alert_ack_fn 独立时，content cited 仍走普通 ack_fn（168h）"""
-    from agent.core.proactive_turn import ack_on_success
     ctx = AgentTickContext()
     ctx.fetched_alerts = []
     ctx.fetched_contents = [{"id": "c1", "ack_server": "feed-mcp"}]

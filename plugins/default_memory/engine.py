@@ -369,7 +369,6 @@ class DefaultMemoryEngine:
         light_provider: LLMProvider | None = None,
         http_resources: SharedHttpResources,
         event_publisher: "EventBus | None" = None,
-        enable_conversation_ingest: bool = True,
     ) -> None:
         self._config = config
         self._default_config = default_config
@@ -432,7 +431,6 @@ class DefaultMemoryEngine:
             repository=self._v2_store.execution,
             inject_max_chars=retrieval.inject.max_chars,
         )
-        _ = enable_conversation_ingest  # compatibility; subscriptions are domain-specific now
         self._wire_memory2_events()
         self.closeables = [self._v2_store, self._embedder]
 
@@ -1104,26 +1102,6 @@ class DefaultMemoryEngine:
             emotional_weight=emotional_weight,
         )
 
-    async def _save_item_with_supersede(
-        self,
-        summary: str,
-        memory_type: str,
-        extra: dict[str, object],
-        source_ref: str,
-        happened_at: str | None = None,
-        emotional_weight: int = 0,
-    ) -> str:
-        if self._memorizer is None:
-            return ""
-        return await self._memorizer.save_item_with_supersede(
-            summary=summary,
-            memory_type=memory_type,
-            extra=extra,
-            source_ref=source_ref,
-            happened_at=happened_at,
-            emotional_weight=emotional_weight,
-        )
-
     async def _query_answer(
         self,
         request: MemoryQuery,
@@ -1407,11 +1385,6 @@ def _dedupe_ids(ids: list[str]) -> list[str]:
             seen.add(item_id)
             out.append(item_id)
     return out
-
-
-def _keep_count(window: int) -> int:
-    aligned_window = max(6, ((max(1, window) + 5) // 6) * 6)
-    return aligned_window // 2
 
 
 def _explicit_hypothesis_prompt(query: str, style: str) -> str:

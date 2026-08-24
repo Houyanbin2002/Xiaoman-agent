@@ -24,6 +24,7 @@ from core.llm import LLMResponse, ToolCall
 from agent.tools.base import Tool
 from agent.tools.registry import ToolRegistry
 from agent.tools.tool_search import ToolSearchTool
+from tests.loop_runtime import run_agent_kernel
 from tests.memory_fakes import FakeMemoryEngine
 
 
@@ -109,7 +110,7 @@ class TestUnknownToolErrorHint:
 
         # 捕获工具调用结果（通过查 tool_chain）
         _, _, tool_chain, _, _ = asyncio.run(
-            loop._run_agent_loop([{"role": "user", "content": "管理RSS"}])
+            run_agent_kernel(loop, [{"role": "user", "content": "管理RSS"}])
         )
 
         # 找到 rss_manage 的调用结果
@@ -158,7 +159,7 @@ class TestKnownInvisibleAutoUnlock:
         loop = _make_loop(tmp_path, provider, reg)
 
         _, tools_used, tool_chain, _, _ = asyncio.run(
-            loop._run_agent_loop([{"role": "user", "content": "明天8点提醒我"}])
+            run_agent_kernel(loop, [{"role": "user", "content": "明天8点提醒我"}])
         )
 
         assert "schedule" not in tools_used, "deferred 工具未加载，不应计入 tools_used"

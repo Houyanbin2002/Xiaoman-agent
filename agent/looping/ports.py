@@ -10,7 +10,7 @@ from agent.runtime.execution_guard import ExecutionGuardConfig
 
 if TYPE_CHECKING:
     from agent.context import ContextBuilder
-    from agent.core.passive_turn import Reasoner
+    from agent.core.contracts import Reasoner
     from agent.core.runner import CoreRunner
     from agent.core.runtime_support import ToolDiscoveryState
     from core.llm import LLMProvider

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.config_models import Config
-from core.memory.plugin import (
+from agent.plugins.memory import (
     MemoryPluginBuildDeps,
     MemoryPluginRuntime,
 )

@@ -551,11 +551,9 @@ def test_tool_base_and_timekit_and_json_store_cover_branches(
     parsed = timekit.parse_iso("2025-06-01T09:00:00Z")
     assert parsed and parsed.tzinfo is not None
     assert timekit.parse_iso("bad") is None
-    assert timekit.format_iso(datetime(2025, 1, 1)).endswith("+00:00")
     logger = MagicMock()
     assert str(timekit.safe_zone("bad/zone", logger=logger)) == "UTC"
     logger.warning.assert_called_once()
-    assert timekit.local_now("UTC").tzinfo is not None
     assert timekit.utcnow().tzinfo is not None
 
 
@@ -675,8 +673,6 @@ def test_context_builder_builds_prompt_messages_and_assistant_blocks(
     assert "明天=" in stamped_message
     assert "后天=" in stamped_message
     assert "weekday=" in stamped_message
-    assert builder.last_assembled_contexts["turn_injection_context"] == {}
-
     turn_injection = builder.build_turn_injection_context(turn_injection_prompt="pref")
     render_result = builder.render(
         ContextRequest(

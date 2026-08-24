@@ -13,10 +13,7 @@ from typing import cast
 import yaml
 from agent.plugins.manager import ActivePluginInfo
 from agent.plugins import skill_links
-from agent.plugins.skill_links import (
-    PluginSkillLinker,
-    remove_plugin_skill_materializations,
-)
+from agent.plugins.skill_links import PluginSkillLinker
 from agent.plugins.skill_paths import (
     is_plugin_skill_materialized,
     plugin_skill_materialization_path,
@@ -40,43 +37,6 @@ def _write_plugin_skill(
         encoding="utf-8",
     )
     return plugin_root / plugin_id
-
-
-def test_remove_plugin_skill_materializations_only_removes_owned_copies(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    plugin_root = tmp_path / "plugins" / "demo"
-    owned_target = plugin_root / "skills" / "owned"
-    other_target = tmp_path / "plugins" / "other" / "skills" / "kept"
-    owned_target.mkdir(parents=True)
-    other_target.mkdir(parents=True)
-    skills_dir = workspace / "skills"
-    owned_copy = skills_dir / "owned"
-    kept_copy = skills_dir / "kept"
-    owned_copy.mkdir(parents=True)
-    kept_copy.mkdir(parents=True)
-    write_managed_skill_copy_marker(
-        owned_copy,
-        logical_name="owned",
-        target=owned_target,
-        fingerprint="owned-fingerprint",
-    )
-    write_managed_skill_copy_marker(
-        kept_copy,
-        logical_name="kept",
-        target=other_target,
-        fingerprint="kept-fingerprint",
-    )
-
-    removed = remove_plugin_skill_materializations(
-        workspace=workspace,
-        plugin_root=plugin_root,
-    )
-
-    assert removed == 1
-    assert not owned_copy.exists()
-    assert kept_copy.exists()
 
 
 def _write_plugin_drift_skill(

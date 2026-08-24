@@ -12,7 +12,6 @@ import tomllib
 import zlib
 from pathlib import Path
 from typing import Any, cast
-from zoneinfo import ZoneInfo
 
 from agent.config_models import (
     ChannelsConfig,
@@ -39,6 +38,8 @@ _PRESETS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
 }
 
+ConfigSection = dict[str, object]
+
 # CLI channel 默认 Unix socket 路径
 DEFAULT_SOCKET = "127.0.0.1:8765" if os.name == "nt" else "/tmp/xiaoman.sock"
 
@@ -52,26 +53,12 @@ def _normalize_cli_socket_endpoint(value: str | None) -> str:
     host, sep, port = text.rpartition(":")
     if sep and host:
         try:
-            int(port)
+            _ = int(port)
             return text
         except ValueError:
             pass
     port_seed = zlib.crc32(text.encode("utf-8")) % 20000
     return f"127.0.0.1:{20000 + port_seed}"
-
-
-def _validated_timezone(tz_name: str, *, enabled: bool) -> str:
-    """仅当 anyaction_enabled=True 时校验时区合法性，无效则启动时 fail-fast。"""
-    if not enabled:
-        return tz_name
-    try:
-        ZoneInfo(tz_name)
-        return tz_name
-    except Exception:
-        raise ValueError(
-            f"proactive.anyaction_timezone 无效: {tz_name!r}，"
-            "请使用 IANA 格式，如 'Asia/Shanghai'"
-        )
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -108,11 +95,11 @@ def load_config(path: str | Path = "config.toml") -> Config:
             agent_cfg.get("system_prompt")
             or data.get("system_prompt", "You are a helpful assistant.")
         ),
-        max_tokens=int(agent_cfg.get("max_tokens", data.get("max_tokens", 8192))),
-        max_iterations=int(
+        max_tokens=_to_int(agent_cfg.get("max_tokens", data.get("max_tokens", 8192))),
+        max_iterations=_to_int(
             agent_cfg.get("max_iterations", data.get("max_iterations", 10))
         ),
-        memory_window=int(
+        memory_window=_to_int(
             agent_context.get("memory_window", data.get("memory_window", 40))
         ),
         base_url=str(
@@ -130,7 +117,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
                 data.get("memory_optimizer_enabled", True),
             )
         ),
-        memory_optimizer_interval_seconds=int(
+        memory_optimizer_interval_seconds=_to_int(
             agent_maintenance.get(
                 "memory_optimizer_interval_seconds",
                 data.get("memory_optimizer_interval_seconds", 64800),
@@ -157,85 +144,85 @@ def load_config(path: str | Path = "config.toml") -> Config:
         ),
         context_compaction=ContextCompactionConfig(
             enabled=bool(context_compaction.get("enabled", True)),
-            trigger_tokens=int(context_compaction.get("trigger_tokens", 200_000)),
-            target_tokens=int(context_compaction.get("target_tokens", 100_000)),
-            keep_recent_tokens=int(
+            trigger_tokens=_to_int(context_compaction.get("trigger_tokens", 200_000)),
+            target_tokens=_to_int(context_compaction.get("target_tokens", 100_000)),
+            keep_recent_tokens=_to_int(
                 context_compaction.get("keep_recent_tokens", 40_000)
             ),
-            summary_max_tokens=int(context_compaction.get("summary_max_tokens", 4_096)),
-            chunk_tokens=int(context_compaction.get("chunk_tokens", 24_000)),
-            max_history_messages=int(
+            summary_max_tokens=_to_int(context_compaction.get("summary_max_tokens", 4_096)),
+            chunk_tokens=_to_int(context_compaction.get("chunk_tokens", 24_000)),
+            max_history_messages=_to_int(
                 context_compaction.get("max_history_messages", 2_000)
             ),
         ).normalized(),
         prompt_cache=PromptCacheConfig(
             enabled=bool(prompt_cache.get("enabled", True)),
             keep_recent_tool_rounds=max(
-                1, int(prompt_cache.get("keep_recent_tool_rounds", 3))
+                1, _to_int(prompt_cache.get("keep_recent_tool_rounds", 3))
             ),
             cold_tool_result_chars=max(
-                400, int(prompt_cache.get("cold_tool_result_chars", 1800))
+                400, _to_int(prompt_cache.get("cold_tool_result_chars", 1800))
             ),
             recent_tool_result_chars=max(
-                800, int(prompt_cache.get("recent_tool_result_chars", 24000))
+                800, _to_int(prompt_cache.get("recent_tool_result_chars", 24000))
             ),
         ).normalized(),
         execution_guard=ExecutionGuardConfig(
             enabled=bool(execution_guard.get("enabled", True)),
-            window_rounds=int(execution_guard.get("window_rounds", 6)),
-            same_signature_warn=int(execution_guard.get("same_signature_warn", 2)),
-            same_signature_stop=int(execution_guard.get("same_signature_stop", 3)),
-            no_progress_rounds=int(execution_guard.get("no_progress_rounds", 4)),
-            max_tool_calls=int(execution_guard.get("max_tool_calls", 12)),
-            soft_timeout_seconds=float(
+            window_rounds=_to_int(execution_guard.get("window_rounds", 6)),
+            same_signature_warn=_to_int(execution_guard.get("same_signature_warn", 2)),
+            same_signature_stop=_to_int(execution_guard.get("same_signature_stop", 3)),
+            no_progress_rounds=_to_int(execution_guard.get("no_progress_rounds", 4)),
+            max_tool_calls=_to_int(execution_guard.get("max_tool_calls", 12)),
+            soft_timeout_seconds=_to_float(
                 execution_guard.get("soft_timeout_seconds", 600)
             ),
-            hard_timeout_seconds=float(
+            hard_timeout_seconds=_to_float(
                 execution_guard.get("hard_timeout_seconds", 3900)
             ),
-            model_call_timeout_seconds=float(
+            model_call_timeout_seconds=_to_float(
                 execution_guard.get("model_call_timeout_seconds", 180)
             ),
-            tool_timeout_seconds=float(
+            tool_timeout_seconds=_to_float(
                 execution_guard.get("tool_timeout_seconds", 300)
             ),
-            side_effect_tool_timeout_seconds=float(
+            side_effect_tool_timeout_seconds=_to_float(
                 execution_guard.get("side_effect_tool_timeout_seconds", 300)
             ),
-            blocking_tool_timeout_seconds=float(
+            blocking_tool_timeout_seconds=_to_float(
                 execution_guard.get("blocking_tool_timeout_seconds", 3600)
             ),
-            context_soft_tokens=int(
+            context_soft_tokens=_to_int(
                 execution_guard.get("context_soft_tokens", 120_000)
             ),
-            context_hard_tokens=int(
+            context_hard_tokens=_to_int(
                 execution_guard.get("context_hard_tokens", 160_000)
             ),
-            max_tool_result_chars=int(
+            max_tool_result_chars=_to_int(
                 execution_guard.get("max_tool_result_chars", 12_000)
             ),
-            max_tool_round_chars=int(
+            max_tool_round_chars=_to_int(
                 execution_guard.get("max_tool_round_chars", 24_000)
             ),
-            max_turn_tool_result_chars=int(
+            max_turn_tool_result_chars=_to_int(
                 execution_guard.get("max_turn_tool_result_chars", 60_000)
             ),
-            subagent_max_iterations=int(
+            subagent_max_iterations=_to_int(
                 execution_guard.get("subagent_max_iterations", 10)
             ),
-            subagent_timeout_seconds=float(
+            subagent_timeout_seconds=_to_float(
                 execution_guard.get("subagent_timeout_seconds", 3900)
             ),
-            subagent_result_chars=int(
+            subagent_result_chars=_to_int(
                 execution_guard.get("subagent_result_chars", 12_000)
             ),
-            workflow_max_concurrency=int(
+            workflow_max_concurrency=_to_int(
                 execution_guard.get("workflow_max_concurrency", 2)
             ),
-            workflow_step_timeout_seconds=float(
+            workflow_step_timeout_seconds=_to_float(
                 execution_guard.get("workflow_step_timeout_seconds", 4200)
             ),
-            workflow_max_subagent_steps=int(
+            workflow_max_subagent_steps=_to_int(
                 execution_guard.get("workflow_max_subagent_steps", 4)
             ),
         ).normalized(),
@@ -259,17 +246,20 @@ def load_config(path: str | Path = "config.toml") -> Config:
     )
 
 
-def _load_channels_config(data: dict) -> ChannelsConfig:
-    channels_data = data.get("channels", {})
+def _load_channels_config(data: ConfigSection) -> ChannelsConfig:
+    channels_data = _as_dict(data.get("channels"))
 
     telegram = None
-    if tg := channels_data.get("telegram"):
+    if tg := _as_dict(channels_data.get("telegram")):
         token = _normalize_optional_config_text(_resolve(str(tg.get("token", ""))))
         if bool(tg.get("enabled", True)) and token:
             telegram = TelegramChannelConfig(
                 token=token,
                 allow_from=[
-                    str(u) for u in tg.get("allow_from", tg.get("allowFrom", []))
+                    str(u)
+                    for u in _as_list(
+                        tg.get("allow_from", tg.get("allowFrom", []))
+                    )
                 ],
                 channel_name=str(tg.get("channel_name", "telegram")),
             )
@@ -283,30 +273,30 @@ def _load_channels_config(data: dict) -> ChannelsConfig:
         cli_session_key = f"{cli_channel}:{cli_chat_id}"
     channels = ChannelsConfig(
         telegram=telegram,
-        socket=_normalize_cli_socket_endpoint(socket_value),
+        socket=_normalize_cli_socket_endpoint(str(socket_value or DEFAULT_SOCKET)),
         cli_session_key=cli_session_key,
     )
     channels.socket = _normalize_cli_socket_endpoint(channels.socket)
     return channels
 
 
-def _load_proactive_config(data: dict) -> ProactiveConfig:
+def _load_proactive_config(data: ConfigSection) -> ProactiveConfig:
     proactive = ProactiveConfig()
-    if p := data.get("proactive"):
+    if p := _as_dict(data.get("proactive")):
         try:
-            proactive = load_proactive_config(p)
+            proactive = load_proactive_config(cast(dict[str, Any], p))
         except ProactiveConfigError as e:
             print(f"❌ Proactive 配置错误: {e}", file=sys.stderr)
             sys.exit(1)
     return proactive
 
 
-def _load_memory_config(data: dict) -> MemoryConfig:
+def _load_memory_config(data: ConfigSection) -> MemoryConfig:
     memory = _as_dict(data.get("memory"))
     embedding = _as_dict(memory.get("embedding"))
     raw_output_dimensionality = embedding.get("output_dimensionality")
     output_dimensionality = (
-        int(raw_output_dimensionality)
+        _to_int(raw_output_dimensionality)
         if raw_output_dimensionality not in (None, "")
         else None
     )
@@ -324,17 +314,19 @@ def _load_memory_config(data: dict) -> MemoryConfig:
     )
 
 
-def _load_conversation_semantics_config(data: dict) -> ConversationSemanticsConfig:
+def _load_conversation_semantics_config(
+    data: ConfigSection,
+) -> ConversationSemanticsConfig:
     raw = _as_dict(data.get("conversation_semantics"))
     return ConversationSemanticsConfig(
         enabled=bool(raw.get("enabled", True)),
-        idle_seconds=max(30, int(raw.get("idle_seconds", 480))),
-        max_turns=max(1, int(raw.get("max_turns", 8))),
+        idle_seconds=max(30, _to_int(raw.get("idle_seconds", 480))),
+        max_turns=max(1, _to_int(raw.get("max_turns", 8))),
         analysis_version=str(raw.get("analysis_version") or "conversation-v3"),
     )
 
 
-def _load_observability_config(data: dict) -> ObservabilityConfig:
+def _load_observability_config(data: ConfigSection) -> ObservabilityConfig:
     observability = _as_dict(data.get("observability"))
     raw = _as_dict(observability.get("langfuse"))
     public_key = _normalize_optional_config_text(
@@ -358,7 +350,7 @@ def _load_observability_config(data: dict) -> ObservabilityConfig:
             )
         )
     )
-    sample_rate = min(1.0, max(0.0, float(raw.get("sample_rate", 1.0))))
+    sample_rate = min(1.0, max(0.0, _to_float(raw.get("sample_rate", 1.0))))
     return ObservabilityConfig(
         langfuse=LangfuseConfig(
             enabled=bool(raw.get("enabled", False)),
@@ -367,36 +359,51 @@ def _load_observability_config(data: dict) -> ObservabilityConfig:
             base_url=base_url or "https://cloud.langfuse.com",
             environment=str(raw.get("environment") or "development"),
             sample_rate=sample_rate,
-            flush_at=max(1, int(raw.get("flush_at", 15))),
+            flush_at=max(1, _to_int(raw.get("flush_at", 15))),
             flush_interval_seconds=max(
-                0.1, float(raw.get("flush_interval_seconds", 1.0))
+                0.1, _to_float(raw.get("flush_interval_seconds", 1.0))
             ),
             capture_content=bool(raw.get("capture_content", True)),
-            max_content_chars=max(1000, int(raw.get("max_content_chars", 60000))),
+            max_content_chars=max(1000, _to_int(raw.get("max_content_chars", 60000))),
             debug=bool(raw.get("debug", False)),
         )
     )
 
 
-def _load_peer_agents_config(data: dict) -> list[PeerAgentConfig]:
+def _load_peer_agents_config(data: ConfigSection) -> list[PeerAgentConfig]:
     integrations = _as_dict(data.get("integrations"))
-    peer_agents = integrations.get("peer_agents", data.get("peer_agents", []))
-    return [
-        PeerAgentConfig(
-            name=pa["name"],
-            base_url=pa["base_url"],
-            launcher=pa["launcher"],
-            cwd=pa.get("cwd"),
-            description=pa.get("description", ""),
-            health_path=pa.get("health_path", "/health"),
-            startup_timeout_s=int(pa.get("startup_timeout_s", 30)),
-            shutdown_timeout_s=int(pa.get("shutdown_timeout_s", 10)),
+    raw_peer_agents = _as_list(
+        integrations.get("peer_agents", data.get("peer_agents", []))
+    )
+    peer_agents: list[PeerAgentConfig] = []
+    for raw_peer_agent in raw_peer_agents:
+        peer_agent = _as_dict(raw_peer_agent)
+        name = str(peer_agent.get("name") or "").strip()
+        base_url = str(peer_agent.get("base_url") or "").strip()
+        launcher = [str(item) for item in _as_list(peer_agent.get("launcher"))]
+        if not name or not base_url or not launcher:
+            raise ValueError("peer_agents 条目必须包含 name、base_url 和 launcher")
+        raw_cwd = peer_agent.get("cwd")
+        peer_agents.append(
+            PeerAgentConfig(
+                name=name,
+                base_url=base_url,
+                launcher=launcher,
+                cwd=str(raw_cwd) if raw_cwd not in (None, "") else None,
+                description=str(peer_agent.get("description") or ""),
+                health_path=str(peer_agent.get("health_path") or "/health"),
+                startup_timeout_s=_to_int(
+                    peer_agent.get("startup_timeout_s", 30)
+                ),
+                shutdown_timeout_s=_to_int(
+                    peer_agent.get("shutdown_timeout_s", 10)
+                ),
+            )
         )
-        for pa in peer_agents
-    ]
+    return peer_agents
 
 
-def _load_fitbit_config(data: dict) -> FitbitIntegrationConfig:
+def _load_fitbit_config(data: ConfigSection) -> FitbitIntegrationConfig:
     integrations = _as_dict(data.get("integrations"))
     fitbit = _as_dict(integrations.get("fitbit"))
     return FitbitIntegrationConfig(
@@ -404,14 +411,16 @@ def _load_fitbit_config(data: dict) -> FitbitIntegrationConfig:
     )
 
 
-def _load_wiring_config(data: dict) -> WiringConfig:
+def _load_wiring_config(data: ConfigSection) -> WiringConfig:
     agent_cfg = _as_dict(data.get("agent"))
-    raw = _as_dict(agent_cfg.get("wiring")) or data.get("wiring", {}) or {}
-    toolsets = raw.get(
+    raw = _as_dict(agent_cfg.get("wiring")) or _as_dict(data.get("wiring"))
+    raw_toolsets = raw.get(
         "toolsets",
         ["meta_common", "task_executor", "schedule", "mcp", "workflow"],
     )
-    if not isinstance(toolsets, list):
+    if isinstance(raw_toolsets, list):
+        toolsets = cast(list[object], raw_toolsets)
+    else:
         toolsets = ["meta_common", "task_executor", "schedule", "mcp", "workflow"]
     return WiringConfig(
         context=str(raw.get("context", "default") or "default"),
@@ -420,20 +429,23 @@ def _load_wiring_config(data: dict) -> WiringConfig:
     )
 
 
-def _load_plugins_config(data: dict) -> dict[str, dict[str, Any]]:
+def _load_plugins_config(data: ConfigSection) -> dict[str, dict[str, Any]]:
     plugins_data = _as_dict(data.get("plugins"))
     plugins: dict[str, dict[str, Any]] = {}
     for name, value in plugins_data.items():
-        if isinstance(name, str) and isinstance(value, dict):
-            plugins[name] = cast(dict[str, Any], _resolve_config_value(value))
+        if isinstance(value, dict):
+            plugins[name] = cast(
+                dict[str, Any],
+                _resolve_config_value(cast(ConfigSection, value)),
+            )
 
     return plugins
 
 
-def _load_extra_body(data: dict) -> dict:
+def _load_extra_body(data: ConfigSection) -> dict[str, Any]:
     llm = _as_dict(data.get("llm"))
     llm_main = _as_dict(llm.get("main"))
-    extra_body = dict(data.get("extra_body", {}))
+    extra_body = cast(dict[str, Any], _as_dict(data.get("extra_body")).copy())
     thinking = llm_main.get("thinking")
     if isinstance(thinking, dict):
         extra_body["thinking"] = thinking
@@ -446,17 +458,36 @@ def _load_extra_body(data: dict) -> dict:
     return extra_body
 
 
-def _as_dict(value: object) -> dict:
-    return value if isinstance(value, dict) else {}
+def _as_dict(value: object) -> ConfigSection:
+    return cast(ConfigSection, value) if isinstance(value, dict) else {}
+
+
+def _as_list(value: object) -> list[object]:
+    return cast(list[object], value) if isinstance(value, list) else []
+
+
+def _to_int(value: object) -> int:
+    if isinstance(value, (str, int, float)):
+        return int(value)
+    raise ValueError(f"配置值必须是整数: {value!r}")
+
+
+def _to_float(value: object) -> float:
+    if isinstance(value, (str, int, float)):
+        return float(value)
+    raise ValueError(f"配置值必须是数字: {value!r}")
 
 
 def _resolve_config_value(value: object) -> object:
     if isinstance(value, str):
         return _resolve(value)
     if isinstance(value, list):
-        return [_resolve_config_value(item) for item in value]
+        return [_resolve_config_value(item) for item in cast(list[object], value)]
     if isinstance(value, dict):
-        return {str(key): _resolve_config_value(item) for key, item in value.items()}
+        return {
+            key: _resolve_config_value(item)
+            for key, item in cast(ConfigSection, value).items()
+        }
     return value
 
 
@@ -482,11 +513,14 @@ def _normalize_optional_config_text(value: str) -> str:
     return text
 
 
-def _load_config_data(path: str | Path) -> dict:
+def _load_config_data(path: str | Path) -> ConfigSection:
     path = Path(path)
     if path.suffix.lower() != ".toml":
         raise ValueError(f"主配置仅支持 TOML: {path.suffix}")
-    return tomllib.loads(path.read_text(encoding="utf-8"))
+    return cast(
+        ConfigSection,
+        tomllib.loads(path.read_text(encoding="utf-8")),
+    )
 
 
 __all__ = [
@@ -498,6 +532,5 @@ __all__ = [
     "MemoryEmbeddingConfig",
     "ObservabilityConfig",
     "TelegramChannelConfig",
-    "_validated_timezone",
     "load_config",
 ]

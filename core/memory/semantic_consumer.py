@@ -4,8 +4,8 @@ import inspect
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from agent.memory import MemoryStore
 from core.conversation_semantics.events import ConversationSemanticBatchCommitted
+from core.memory.markdown import MarkdownStoreApi
 
 
 class ConversationMemoryBatchConsumer:
@@ -14,16 +14,12 @@ class ConversationMemoryBatchConsumer:
     def __init__(
         self,
         *,
-        markdown: MemoryStore,
+        markdown: MarkdownStoreApi,
         candidate_sink: Callable[..., object],
-        get_session: Callable[[str], object],
-        save_session: Callable[[object], object],
         recent_context_chars: int = 4500,
     ) -> None:
         self._markdown = markdown
         self._candidate_sink = candidate_sink
-        self._get_session = get_session
-        self._save_session = save_session
         self._recent_context_chars = max(1000, int(recent_context_chars))
 
     async def handle(self, event: ConversationSemanticBatchCommitted) -> None:

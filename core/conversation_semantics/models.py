@@ -88,7 +88,15 @@ class RecentActivityCandidate:
             return None
         raw_weight = raw.get("importance", raw.get("emotional_weight"))
         try:
-            weight = max(0, min(10, int(raw_weight or 0)))
+            weight = max(
+                0,
+                min(
+                    10,
+                    int(raw_weight)
+                    if isinstance(raw_weight, (str, int, float))
+                    else 0,
+                ),
+            )
         except (TypeError, ValueError):
             weight = 0
         return cls(

@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from bus.events import InboundMessage
-
 @dataclass
 class ChatMessage:
     role: str
@@ -116,12 +114,4 @@ class ReasonerResult:
     invocations: list[LLMToolCall] = field(default_factory=list)
     thinking: str | None = None
     streamed: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class TurnRecord:
-    msg: InboundMessage
-    reply: str
-    invocations: list[LLMToolCall] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

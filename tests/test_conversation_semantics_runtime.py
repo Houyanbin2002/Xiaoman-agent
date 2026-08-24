@@ -7,7 +7,7 @@ import pytest
 from bus.event_bus import EventBus
 from bus.events_lifecycle import TurnCommitted, TurnStarted
 from agent.config_models import ConversationSemanticsConfig
-from core.conversation_semantics.runtime import (
+from agent.conversation_semantics.runtime import (
     ConversationSemanticsRuntime,
     build_conversation_semantics_runtime,
 )
@@ -61,7 +61,6 @@ async def test_runtime_builder_respects_enabled_flag(tmp_path) -> None:
         model="light",
         session_store=session_store,
         event_bus=event_bus,
-        keep_messages=20,
     )
 
     assert runtime is None

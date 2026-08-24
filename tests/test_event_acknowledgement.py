@@ -8,7 +8,7 @@ from core.attention.events.service import EventDrivenAttentionService
 from agent.scheduler import ScheduledJobChanged
 from core.attention.feedback.service import FeedbackService
 from core.personal.events import PersonalRecordChanged
-from core.personal.models import CommitmentData, PersonalEntityType, RecordSource
+from core.personal.models import PersonalEntityType, RecordSource
 from core.personal.service import PersonalDataService
 from infra.persistence.attention_engine_store import AttentionEngineStore
 from infra.persistence.personal_store import PersonalStore
@@ -28,10 +28,10 @@ async def test_user_completion_closes_event_wakes_and_updates_projection(tmp_pat
         entity_type=PersonalEntityType.COMMITMENT,
         title="提交组会汇报",
         summary="下午前完成",
-        data=CommitmentData(
-            title="提交组会汇报",
-            due_at=(now + timedelta(hours=4)).isoformat(),
-        ),
+        data={
+            "title": "提交组会汇报",
+            "due_at": (now + timedelta(hours=4)).isoformat(),
+        },
         source=RecordSource("notion", "page-42"),
         actor="external-sync",
     )

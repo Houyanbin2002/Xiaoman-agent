@@ -8,7 +8,7 @@ from core.attention.events.service import EventDrivenAttentionService
 from core.conversation_semantics.events import ConversationSemanticBatchCommitted
 from core.conversation_semantics.models import SemanticBatchPayload
 from core.personal.events import PersonalRecordChanged
-from core.personal.models import CommitmentData, PersonalEntityType, RecordSource
+from core.personal.models import PersonalEntityType, RecordSource
 from core.personal.service import PersonalDataService
 from infra.persistence.attention_engine_store import AttentionEngineStore
 from infra.persistence.personal_store import PersonalStore
@@ -229,10 +229,10 @@ async def test_completed_personal_record_closes_event_and_cancels_wake(
         entity_type=PersonalEntityType.COMMITMENT,
         title="提交周报",
         summary="今天提交",
-        data=CommitmentData(
-            title="提交周报",
-            due_at=(now + timedelta(hours=8)).isoformat(),
-        ),
+        data={
+            "title": "提交周报",
+            "due_at": (now + timedelta(hours=8)).isoformat(),
+        },
         source=RecordSource("notion", "page-1"),
         actor="external-sync",
     )

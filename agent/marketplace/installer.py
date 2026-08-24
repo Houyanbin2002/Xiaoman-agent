@@ -10,7 +10,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol, cast
 
 from agent.skill_packages import install_skill_directory
 
@@ -103,7 +103,12 @@ class MarketplaceInstaller:
         item = self._service.get("skill", item_id)
         assert item is not None
         with tempfile.TemporaryDirectory(prefix="xiaoman-market-skill-") as temporary:
-            skill_root = await asyncio.to_thread(download, item_id, Path(temporary))
+            download_skill = cast(Callable[[str, Path], Path], download)
+            skill_root = await asyncio.to_thread(
+                download_skill,
+                item_id,
+                Path(temporary),
+            )
             result = await asyncio.to_thread(
                 install_skill_directory,
                 skill_root=skill_root,

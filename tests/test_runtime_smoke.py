@@ -17,7 +17,7 @@ from agent.config import (
     TelegramChannelConfig,
     load_config,
 )
-from agent.memory import DEFAULT_SELF_MD
+from infra.persistence.markdown_memory_store import DEFAULT_SELF_MD
 from bus.event_bus import EventBus
 from core.net.http import SharedHttpResources
 
@@ -318,7 +318,6 @@ def test_init_workspace_creates_expected_assets(tmp_path):
     assert (workspace / "sessions.db").exists()
     assert (workspace / "observe").is_dir()
     assert (workspace / "memory" / "consolidation_writes.db").exists()
-    assert (workspace / "memory" / "journal").is_dir()
     assert (workspace / "memory" / "akasha.db").exists()
     assert (workspace / "memory" / "memory2.db").exists()
     assert "Proactive Context" in (workspace / "PROACTIVE_CONTEXT.md").read_text(

@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from bus.events import InboundMessage, OutboundMessage
 
-if TYPE_CHECKING:
-    from agent.core.passive_turn import AgentCore
+
+class AgentCorePort(Protocol):
+    async def process(
+        self,
+        msg: InboundMessage,
+        key: str,
+        *,
+        dispatch_outbound: bool = True,
+    ) -> OutboundMessage: ...
 
 
 @dataclass
 class CoreRunnerDeps:
-    agent_core: "AgentCore"
+    agent_core: AgentCorePort
 
 
 class CoreRunner:
