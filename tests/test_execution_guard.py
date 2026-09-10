@@ -6,6 +6,7 @@ from agent.runtime.execution_guard import (
     bound_tool_result,
 )
 from agent.tools.base import ToolResult
+import pytest
 
 
 def _call(
@@ -48,6 +49,48 @@ def test_same_readonly_signature_warns_then_stops() -> None:
         after_second.state, [_call("c3")], risk_resolver=lambda _name: "read-only"
     )
     assert third.stop_reason == "tool_call_loop"
+
+
+@pytest.mark.parametrize("prefix", ["", "x" * 9_000])
+def test_same_read_with_new_evidence_keeps_running(prefix: str) -> None:
+    guard = ExecutionGuard(ExecutionGuardConfig(max_turn_tool_result_chars=200_000))
+    state = guard.initial_state()
+    for index in range(6):
+        call = _call(str(index), result=f"{prefix}progress={index}")
+        before = guard.before_tool_batch(state, [call], risk_resolver=lambda _: "read-only")
+        assert not before.stop_reason
+        after = guard.after_tool_round(before.state, [call])
+        assert not after.stop_reason
+        assert not after.hint
+        state = after.state
+
+
+def test_healthy_polling_does_not_trigger_no_progress_but_keeps_call_budget() -> None:
+    guard = ExecutionGuard(ExecutionGuardConfig(max_tool_calls=8))
+    state = guard.initial_state()
+    for index in range(8):
+        call = _call(str(index), name="process_output", result='{"status":"running"}')
+        before = guard.before_tool_batch(state, [call], risk_resolver=lambda _: "read-only")
+        assert not before.stop_reason
+        after = guard.after_tool_round(before.state, [call])
+        assert not after.stop_reason
+        state = after.state
+    assert guard.before_tool_batch(state, [call], risk_resolver=lambda _: "read-only").stop_reason == "tool_budget"
+
+
+def test_oscillation_requires_stagnant_results() -> None:
+    guard = ExecutionGuard()
+    state = guard.initial_state()
+    for index in range(6):
+        call = _call(str(index), name=f"read_{index % 2}", result=str(index))
+        decision = guard.after_tool_round(state, [call])
+        assert not decision.stop_reason
+        state = decision.state
+    state = guard.initial_state()
+    for index in range(4):
+        decision = guard.after_tool_round(state, [_call(str(index), name=f"read_{index % 2}")])
+        state = decision.state
+    assert decision.stop_reason == "tool_oscillation"
 
 
 def test_duplicate_side_effect_is_blocked_before_second_execution() -> None:

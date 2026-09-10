@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from hashlib import sha1
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -13,7 +12,6 @@ from agent.skills import BUILTIN_SKILLS_DIR
 from agent.tool_hooks import ToolHook
 from agent.tools.registry import ToolRegistry
 from agent.tools.web_fetch import WebFetchTool
-from agent.turns.result import TurnOutbound, TurnResult, TurnTrace
 from agent.turns.orchestrator import TurnOrchestrator
 from agent.runtime.model_step import run_model_step
 from bus.event_bus import EventBus
@@ -235,53 +233,9 @@ class AgentTickFactory:
                     memory=self._deps.memory,
                     recent_chat_fn=self._build_recent_chat_fn(),
                     shared_tools=self._deps.shared_tools,
-                    send_message_fn=self._build_drift_send_message_fn(),
                     event_bus=self._deps.event_bus,
                 ),
                 max_steps=self._deps.cfg.drift_max_steps,
                 tool_hooks=self._deps.tool_hooks,
             )
         )
-
-    def _build_drift_send_message_fn(self) -> Callable[..., Awaitable[bool]] | None:
-        orchestrator = self._deps.turn_orchestrator
-        session_key = self._get_session_key()
-        state_store = self._deps.state_store
-        if orchestrator is None:
-            return None
-
-        @dataclass
-        class _SideEffect:
-            callback: Callable[[], None]
-
-            async def run(self) -> None:
-                self.callback()
-
-        async def send_message(content: str, media: list[str] | None = None) -> bool:
-            media_paths = list(media or [])
-            delivery_key = sha1(
-                (content[:500] + "|".join(media_paths[:5])).encode()
-            ).hexdigest()[:16]
-            result = TurnResult(
-                decision="reply",
-                outbound=TurnOutbound(
-                    session_key=session_key, content=content, media=media_paths
-                ),
-                trace=TurnTrace(source="proactive", extra={"source_mode": "drift"}),
-                success_side_effects=[
-                    _SideEffect(
-                        callback=lambda: state_store.mark_delivery(
-                            session_key,
-                            delivery_key,
-                        )
-                    )
-                ],
-            )
-            return await orchestrator.handle_proactive_turn(
-                result=result,
-                session_key=session_key,
-                channel=str(self._deps.cfg.default_channel or "").strip(),
-                chat_id=str(self._deps.cfg.default_chat_id or "").strip(),
-            )
-
-        return send_message

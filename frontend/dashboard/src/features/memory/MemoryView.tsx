@@ -242,7 +242,28 @@ function RecallPanel(props: { loading: boolean; memories: StoredMemoryRow[]; has
 
 function PendingPanel(props: { loading: boolean; conflicts: MemoryConflictRow[]; busy: string; onResolve: (conflict: MemoryConflictRow, action: "keep_existing" | "accept_candidate") => Promise<void> }): React.ReactElement {
   if (props.loading) return <LoadingState />;
-  return <section className="memory-panel"><div className="memory-panel-heading"><div><h2>需要你决定的记忆</h2><p>自动发现的信息只有在发生冲突、涉及敏感内容或需要改写旧记忆时才会停在这里。</p></div></div>{props.conflicts.length ? <div className="memory-conflict-list">{props.conflicts.map((conflict) => { const candidate = conflict.candidate; const candidateData = candidate.data && typeof candidate.data === "object" ? candidate.data as Record<string, unknown> : {}; const candidateText = String(candidateData.content ?? candidate.summary ?? "新记忆"); return <article className="memory-conflict-card" key={conflict.id}><div className="memory-conflict-icon"><ShieldCheck size={17} /></div><div><Badge tone="amber">需要你确认</Badge><h3>{String(candidate.summary ?? "记忆内容发生变化")}</h3>{conflict.existing ? <p><small>原来</small>{String(conflict.existing.data.content ?? conflict.existing.summary)}</p> : null}<p><small>新的</small>{candidateText}</p><div className="memory-conflict-actions"><button className="secondary-button" disabled={props.busy === conflict.id} onClick={() => void props.onResolve(conflict, "keep_existing")}><X size={14} />保留原内容</button><button className="primary-button" disabled={props.busy === conflict.id} onClick={() => void props.onResolve(conflict, "accept_candidate")}><Check size={14} />使用新内容</button></div></div></article>; })}</div> : <EmptyState icon={Clock3} title="没有需要确认的记忆" text="自动发现和明确记住的内容已经通过统一治理，没有未处理冲突。" />}</section>;
+  return <section className="memory-panel">
+    <div className="memory-panel-heading"><div><h2>需要你决定的记忆</h2><p>发生冲突、涉及敏感内容或原文依据不足时，请核对小满是否理解正确。引用了你的话不等于已经获得你的确认。</p></div></div>
+    {props.conflicts.length ? <div className="memory-conflict-list">{props.conflicts.map((conflict) => {
+      const candidate = conflict.candidate;
+      const data = candidate.data && typeof candidate.data === "object" ? candidate.data as Record<string, unknown> : {};
+      const evidence = candidate.extraction_evidence && typeof candidate.extraction_evidence === "object" ? candidate.extraction_evidence as Record<string, unknown> : {};
+      const reason = conflict.reason === "unverified_extraction_evidence" ? "原文证据不足，尚未确认" : conflict.reason === "extracted_correction_requires_confirmation" ? "小满认为你在纠正记忆，请核对" : "请确认记忆内容与适用范围";
+      return <article className="memory-conflict-card" key={conflict.id}>
+        <div className="memory-conflict-icon"><ShieldCheck size={17} /></div><div>
+          <Badge tone="amber">需要你确认</Badge><h3>{String(candidate.summary ?? "记忆内容发生变化")}</h3><p>{reason}</p>
+          {conflict.existing ? <p><small>原来</small>{String(conflict.existing.data.content ?? conflict.existing.summary)}</p> : null}
+          <p><small>小满的理解</small>{String(data.content ?? candidate.summary ?? "新记忆")}</p>
+          {evidence.quote ? <p><small>引用原话</small>{String(evidence.quote)}</p> : null}
+          {evidence.context ? <details><summary>查看相邻原文</summary><p>{String(evidence.context)}</p></details> : null}
+          <div className="memory-conflict-actions">
+            <button className="secondary-button" disabled={props.busy === conflict.id} onClick={() => void props.onResolve(conflict, "keep_existing")}><X size={14} />{conflict.existing ? "保留原内容" : "不保存此候选"}</button>
+            <button className="primary-button" disabled={props.busy === conflict.id} onClick={() => void props.onResolve(conflict, "accept_candidate")}><Check size={14} />确认新内容</button>
+          </div>
+        </div>
+      </article>;
+    })}</div> : <EmptyState icon={Clock3} title="没有需要确认的记忆" text="当前没有待你处理的记忆候选。" />}
+  </section>;
 }
 
 function filterGoverned(records: PersonalRecordRow[], query: string): PersonalRecordRow[] {

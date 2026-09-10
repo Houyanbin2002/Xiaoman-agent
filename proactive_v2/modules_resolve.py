@@ -52,7 +52,7 @@ def _build_delivery_refs(ctx: AgentTickContext) -> list[str]:
         return []
     content_map = {
         f"{e.get('ack_server', '')}:{e.get('event_id') or e.get('id', '')}": e
-        for e in ctx.fetched_contents
+        for e in [*ctx.fetched_contents, *ctx.fetched_alerts]
         if e.get("ack_server") and (e.get("event_id") or e.get("id"))
     }
     refs: list[str] = []
@@ -60,6 +60,10 @@ def _build_delivery_refs(ctx: AgentTickContext) -> list[str]:
         meta = content_map.get(key)
         if meta is None:
             refs.append(f"id:{key}")
+            continue
+        event_id = str(meta.get("canonical_event_id") or "")
+        if event_id:
+            refs.append(f"event:{event_id}")
             continue
         url = _normalize_delivery_url(str(meta.get("url") or ""))
         if url:
@@ -82,6 +86,8 @@ def build_delivery_key(ctx: AgentTickContext) -> str:
         key_src = json.dumps(sorted(ctx.cited_item_ids))
     else:
         key_src = ctx.final_message[:500]
+    if ctx.final_media:
+        key_src += json.dumps(sorted(set(ctx.final_media)), ensure_ascii=False)
     return sha1(key_src.encode()).hexdigest()[:16]
 
 
@@ -393,6 +399,7 @@ class ProactiveResolver:
                 outbound=TurnOutbound(
                     session_key=self._session_key,
                     content=ctx.final_message,
+                    media=list(ctx.final_media),
                 ),
                 evidence=list(ctx.cited_item_ids),
                 trace=TurnTrace(
@@ -400,6 +407,8 @@ class ProactiveResolver:
                     extra={
                         "steps_taken": ctx.steps_taken,
                         "skip_reason": "",
+                        "delivery_key": delivery_key,
+                        "source_mode": "drift" if ctx.drift_entered else "proactive",
                         "state_summary_tag": "none",
                     },
                 ),

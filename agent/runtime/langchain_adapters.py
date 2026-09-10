@@ -29,6 +29,8 @@ class ProviderChatModel(BaseChatModel):
     provider: Any = Field(exclude=True)
     model_name: str
     max_output_tokens: int = 8192
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    disable_thinking: bool = False
     tool_schemas: list[dict[str, Any]] = Field(default_factory=list)
     source: str = "passive"
     iteration: int = 1
@@ -92,6 +94,8 @@ class ProviderChatModel(BaseChatModel):
             model=self.model_name,
             max_tokens=self.max_output_tokens,
             tool_choice="auto",
+            extra_body=self.extra_body,
+            disable_thinking=self.disable_thinking,
             on_content_delta=self.on_content_delta,
             source=self.source,
             iteration=self.iteration,

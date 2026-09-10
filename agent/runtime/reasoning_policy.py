@@ -18,6 +18,9 @@ REASONING_EFFORTS = (
     "xhigh",
     "max",
 )
+# Reserved workflow context key.  It is written by the trusted tool/runtime
+# boundary and never exposed as a model-authored workflow setting.
+WORKFLOW_REASONING_CONTEXT_KEY = "_runtime_reasoning_effort"
 _VALID_EFFORTS = frozenset(REASONING_EFFORTS)
 _QWEN_BUDGETS = {
     "minimal": 1_024,
@@ -200,6 +203,7 @@ def _is_qwen_hybrid(model: str) -> bool:
 
 __all__ = [
     "REASONING_EFFORTS",
+    "WORKFLOW_REASONING_CONTEXT_KEY",
     "ReasoningDecision",
     "ReasoningPolicy",
     "ReasoningPolicyConfig",

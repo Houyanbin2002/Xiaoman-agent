@@ -22,6 +22,7 @@ import shlex
 import ipaddress
 import subprocess
 import tempfile
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from urllib.parse import urlparse
@@ -121,10 +122,30 @@ class _BackgroundTask:
     timeout_s: int | None = None
     timeout_handle: asyncio.TimerHandle | None = None
     finish_reason: str = "natural"
+    owner: str = ""
 
 
 # 模块级单例：跨 ShellTool 实例共享
 _BG_REGISTRY: dict[str, _BackgroundTask] = {}
+shell_execution_owner: ContextVar[str] = ContextVar("shell_execution_owner", default="")
+
+
+async def cancel_owned_processes(owner: str) -> None:
+    """Reap only this execution's background commands, never another turn's service."""
+    if not owner:
+        return
+    owned = [(key, task) for key, task in list(_BG_REGISTRY.items()) if task.owner == owner]
+    for key, _ in owned:
+        _bg_kill(key, finish_reason="owner_cancelled")
+    pumps = [task.pump_task for _, task in owned if task.pump_task is not None]
+    if pumps:
+        await asyncio.gather(*pumps, return_exceptions=True)
+    # Windows cannot unlink an open pump log. Retry after all drains are closed.
+    for _, task in owned:
+        try:
+            os.unlink(task.log_path)
+        except OSError:
+            pass
 
 
 async def _bg_pump(
@@ -241,6 +262,9 @@ def _bg_kill(task_id: str, *, finish_reason: str = "stopped") -> None:
     if task.timeout_handle is not None:
         task.timeout_handle.cancel()
     try:
+        # Killing an already exited process is harmless on real subprocesses;
+        # keeping this unconditional also handles providers whose returncode is
+        # not refreshed until wait() completes.
         _kill_process_tree(task.proc)
     except (ProcessLookupError, PermissionError):
         pass
@@ -296,6 +320,7 @@ class ShellTool(Tool):
             "- 命令超过 15 秒未完成时默认自动转为后台任务，返回 background_task_id；后台会沿用当前 timeout 作为硬截止时间\n"
             "- 只有用户明确说“阻塞”时，才设置 auto_promote=false；未显式传 timeout 时会默认阻塞 21600 秒\n"
             "- 服务进程或已知长时间运行的命令，直接用 run_in_background=true 后台启动，跳过 15 秒等待；后台模式只有显式传 timeout 时才会按 timeout 自动终止\n"
+            "- 默认后台任务归属当前执行，用户停止当前执行时一并停止；只有用户要求持续运行的独立服务，才同时设置 detached=true\n"
             "- 收到 background_task_id 后，由你负责用 process_output 主动查看进展和结果；不会有系统自动回传\n"
             "- process_output 是轮询接口：block=true 单次最多等 30s 就返回快照（不会等到进程结束），长进程靠多次轮询推进\n"
             "- 如果决定放弃后台进程并准备最终回复，必须先调用 process_stop 终止它\n"
@@ -347,6 +372,10 @@ class ShellTool(Tool):
                         "只有用户明确说“阻塞”时才设为 false；不传 timeout 时默认等待 21600 秒。"
                     ),
                 },
+                "detached": {
+                    "type": "boolean",
+                    "description": "默认 false。仅用户明确要求持续运行的独立服务可设 true，且必须 run_in_background=true；停止本轮不会停止独立服务，仍可用 process_stop 停止。",
+                },
                 "cwd": {
                     "type": "string",
                     "description": "可选工作目录；相对路径按当前进程工作目录解析。",
@@ -361,6 +390,9 @@ class ShellTool(Tool):
         timeout_specified = "timeout" in kwargs and kwargs.get("timeout") is not None
         run_in_background: bool = bool(kwargs.get("run_in_background", False))
         auto_promote: bool = bool(kwargs.get("auto_promote", True))
+        detached = bool(kwargs.get("detached", False))
+        if detached and not run_in_background:
+            return _err("detached=true 必须同时使用 run_in_background=true")
         max_timeout = (
             _BLOCKING_TIMEOUT
             if not run_in_background and not auto_promote
@@ -417,7 +449,7 @@ class ShellTool(Tool):
         if run_in_background:
             bg_timeout = timeout if timeout_specified else None
             return await self._execute_background(
-                command, description, cwd, env, bg_timeout
+                command, description, cwd, env, bg_timeout, detached=detached
             )
 
         # ── 前台路径（默认 15s 未完成自动转后台）──────────────────────
@@ -442,6 +474,8 @@ class ShellTool(Tool):
         cwd: Path | None,
         env: dict[str, str],
         timeout_s: int | None,
+        *,
+        detached: bool = False,
     ) -> str:
         task_id = f"shell_{uuid4().hex[:12]}"
         log_fd, log_path = tempfile.mkstemp(
@@ -464,6 +498,7 @@ class ShellTool(Tool):
             command=command,
             description=description,
             timeout_s=timeout_s,
+            owner="" if detached else shell_execution_owner.get(),
         )
         pump = asyncio.create_task(_bg_pump(proc, log_path, bg))
         pump.add_done_callback(lambda _: _on_background_task_done(task_id, bg))
@@ -480,6 +515,8 @@ class ShellTool(Tool):
                 "output_path": log_path,
                 "started_at_ms": wall_start_ms,
                 "timeout_s": timeout_s,
+                "detached": detached,
+                "cancel_with_turn": bool(bg.owner),
                 "exit_code": None,
                 "interrupted": False,
             },
@@ -521,6 +558,7 @@ class ShellTool(Tool):
             command=command,
             description=description,
             timeout_s=hard_timeout_s,
+            owner=shell_execution_owner.get(),
         )
         pump = asyncio.create_task(_bg_pump(proc, log_path, bg, on_data))
         bg.pump_task = pump
@@ -552,6 +590,7 @@ class ShellTool(Tool):
                     "exit_code": None,
                     "interrupted": False,
                     "auto_promoted": True,
+                    "cancel_with_turn": bool(bg.owner),
                 },
                 ensure_ascii=False,
             )

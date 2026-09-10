@@ -50,6 +50,7 @@ class MemoryPlugin:
             light_provider=deps.light_provider,
             http_resources=deps.http_resources,
             event_publisher=deps.event_publisher,
+            activity_resolver=deps.markdown.store.activity_recall_states,
         )
         return MemoryPluginRuntime(
             engine=engine,

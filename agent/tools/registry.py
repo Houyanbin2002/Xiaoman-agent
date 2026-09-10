@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 # 元工具（不参与搜索结果，也不出现在 deferred 工具目录里）
 _META_TOOLS: frozenset[str] = frozenset({"tool_search"})
 _TRUSTED_CONTEXT_FIELDS: frozenset[str] = frozenset(
-    {"current_user_message", "current_user_source_ref"}
+    {
+        "current_user_message",
+        "current_user_source_ref",
+        # Filled from the persisted graph decision, not from model arguments.
+        "current_reasoning_effort",
+    }
 )
 _PROGRESS_DESCRIPTION_FIELD = "description"
 _PROGRESS_DESCRIPTION_SCHEMA: dict[str, str] = {
@@ -214,8 +219,18 @@ class ToolRegistry:
             context = self._context.get()
             merged: dict[str, Any] = {**context, **arguments}
             for field in _TRUSTED_CONTEXT_FIELDS:
+                # The reasoning choice is an internal hand-off contract for
+                # durable task creation only; do not add it to every tool's
+                # kwargs (many tools intentionally assert an exact payload).
+                if field == "current_reasoning_effort" and name != "task_create":
+                    merged.pop(field, None)
+                    continue
                 if field in context:
                     merged[field] = context[field]
+                else:
+                    # Reserved runtime fields must never be supplied by a
+                    # model-crafted tool call when the host has no value.
+                    merged.pop(field, None)
             if not _tool_defines_parameter(tool, _PROGRESS_DESCRIPTION_FIELD):
                 merged.pop(_PROGRESS_DESCRIPTION_FIELD, None)
             return await tool.execute(**merged)

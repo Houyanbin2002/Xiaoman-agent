@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+from core.conversation_semantics.models import RecentActivityCandidate
+
 
 @dataclass(frozen=True)
 class ConsolidateRequest:
@@ -32,6 +34,16 @@ class MarkdownStoreApi(Protocol):
     """Markdown 支持文件端口；具体文件/SQLite 实现在 infra。"""
 
     def read_self(self) -> str: ...
+
+    def apply_activity_updates(
+        self, entries: list[RecentActivityCandidate], *, batch_id: str, session_key: str
+    ) -> None: ...
+
+    def activity_snapshot(self) -> list[dict[str, object]]: ...
+
+    def activity_recall_states(
+        self, refs: list[str]
+    ) -> dict[str, list[dict[str, object]]]: ...
 
     def read_recent_context(self) -> str: ...
 

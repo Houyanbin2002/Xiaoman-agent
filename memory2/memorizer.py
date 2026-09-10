@@ -283,6 +283,8 @@ class Memorizer:
         scope_channel: str,
         scope_chat_id: str,
         emotional_weight: int = 0,
+        activity_update_ref: str = "",
+        happened_at: str | None = None,
     ) -> None:
         """将 consolidation 的产出写入 SQLite"""
         # 1. history_entry → event
@@ -297,7 +299,7 @@ class Memorizer:
                     text = ""
                 if text:
                     embedding = await self._embedder.embed(text)
-                    if self._should_semantic_dedup_event(
+                    if not activity_update_ref and self._should_semantic_dedup_event(
                         embedding,
                         emotional_weight=emotional_weight,
                     ):
@@ -310,8 +312,14 @@ class Memorizer:
                         extra={
                             "scope_channel": scope_channel,
                             "scope_chat_id": scope_chat_id,
+                            **(
+                                {"activity_update_ref": activity_update_ref}
+                                if activity_update_ref
+                                else {}
+                            ),
                         },
-                        happened_at=_parse_history_entry_happened_at(text),
+                        happened_at=happened_at
+                        or _parse_history_entry_happened_at(text),
                         emotional_weight=emotional_weight,
                     )
                     if result.startswith("skipped:"):

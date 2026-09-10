@@ -50,6 +50,7 @@ def build_conversation_semantics_runtime(
     model: str,
     session_store: SessionStore,
     event_bus: EventBus,
+    activity_context_provider: Callable[[], list[dict[str, object]]] | None = None,
 ) -> ConversationSemanticsRuntime | None:
     if not config.enabled:
         return None
@@ -57,6 +58,7 @@ def build_conversation_semantics_runtime(
         provider,
         model,
         analysis_version=config.analysis_version,
+        activity_context_provider=activity_context_provider,
     )
     batcher = ConversationSemanticBatcher(
         message_source=session_store,

@@ -9,7 +9,9 @@ from agent.core.runtime_support import ToolDiscoveryState
 from agent.looping.ports import LLMConfig, LLMServices
 from agent.runtime.execution_policy import SUBAGENT_EXECUTION_POLICY
 from agent.runtime.execution_guard import ExecutionGuardConfig
+from agent.runtime.delegation import DelegationBudgetExceeded
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.reasoning_policy import ReasoningPolicyConfig
 from agent.tool_hooks.base import ToolHook
 from agent.tools.base import Tool
 from agent.tools.registry import ToolRegistry
@@ -36,6 +38,7 @@ class SubAgent:
         max_tokens: int = 8192,
         execution_guard_config: ExecutionGuardConfig | None = None,
         graph_runtime: LangGraphRuntime | None = None,
+        reasoning_config: ReasoningPolicyConfig | None = None,
     ) -> None:
         self._system_prompt = system_prompt
         self.last_exit_reason = "idle"
@@ -49,6 +52,7 @@ class SubAgent:
         self._kernel = AgentExecutionKernel(
             llm=LLMServices(provider=provider, light_provider=provider),
             llm_config=LLMConfig(
+                reasoning=reasoning_config or ReasoningPolicyConfig(),
                 model=model,
                 light_model=model,
                 max_iterations=max_iterations,
@@ -71,7 +75,9 @@ class SubAgent:
     def add_tool_hooks(self, hooks: list[ToolHook]) -> None:
         self._kernel.add_tool_hooks(hooks)
 
-    async def run(self, task: str, *, execution_id: str | None = None) -> str:
+    async def run(
+        self, task: str, *, execution_id: str | None = None, reasoning_effort: str = ""
+    ) -> str:
         """Run one isolated task and return its final or bounded summary text."""
         self.last_exit_reason = "running"
         self.iterations_used = 0
@@ -93,8 +99,12 @@ class SubAgent:
                 messages,
                 tool_event_session_key=thread_key,
                 request_text=task,
+                reasoning_effort=reasoning_effort,
                 permission_mode="full_access",
             )
+        except DelegationBudgetExceeded:
+            self.last_exit_reason = "budget_exhausted"
+            raise
         except Exception as exc:
             logger.error("[subagent] 执行失败: %s", exc, exc_info=True)
             self.last_exit_reason = "error"

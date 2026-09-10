@@ -12,7 +12,6 @@ from collections.abc import Mapping, Sequence
 
 from core.conversation_semantics.evidence import sanitize_text
 
-
 _DIRECTIVE_RE = re.compile(
     r"(?:以后|默认|优先|我喜欢|我的默认|不要再|不要打扰|不要主动提醒|不要发到|规则|作废|取消|改为|改成|"
     r"从.+开始|按.+处理|已经结束|当前主要关注)",
@@ -30,6 +29,18 @@ def extract_explicit_candidates(
         message_id = str(message.get("id") or "").strip()
         text = sanitize_text(message.get("content"), limit=2000)
         if not message_id or not text or not _DIRECTIVE_RE.search(text):
+            continue
+        # Ambiguous attribution/negation and one-off tasks stay with semantic
+        # analysis; a deterministic fallback must not invent a positive rule.
+        if re.search(
+            r"(?:他说|她说|同事|朋友说|假如|如果|例如|举例|不是说|不喜欢|不要用|这次|本次|这条|今天)",
+            text,
+        ):
+            continue
+        if any(
+            token in text
+            for token in ("工作时", "闲聊时", "工作场景", "闲聊场景", "项目", "场合")
+        ):
             continue
         correction = _correction_candidate(text, message_id)
         if correction is not None:
@@ -55,7 +66,14 @@ def _base(
         "origin": "explicit_user" if tag == "preference" else "user_correction",
         "evidence_refs": [message_id],
         "source_message_id": message_id,
+        "evidence_quote": text,
         "subject": "用户",
+        "scope": (
+            "work"
+            if key == "communication_channel"
+            and any(word in text for word in ("工作任务", "工作内容"))
+            else "技术方案" if key == "document_format" and "技术方案" in text else ""
+        ),
         "attributes": {"preference_key": key},
     }
 
@@ -107,14 +125,13 @@ def _correction_candidate(text: str, message_id: str) -> dict[str, object] | Non
         (r"不要再默认\s*(.+?)了.*?(?:用|改为)\s*(.+?)[。.!！]?$", "document_format"),
         (r"之前允许发(.+?)的规则取消.*?只在(.+?)处理", "communication_channel"),
         (r"免打扰时间从(.+?)改成(.+?)(?:开始)?[。.!！]?$", "notification_quiet_hours"),
-        (r"(.+?)已经结束.*?当前主要关注\s*(.+?)[。.!！]?$", "active_project"),
         (r"回复不要再写得\s*(.+?)，默认控制在\s*(.+?)[。.!！]?$", "response_length"),
     )
     for pattern, key in pairs:
         match = re.search(pattern, text, re.IGNORECASE)
         if not match:
             continue
-        old, new = (part.strip(" ，,。.!！\"") for part in match.groups())
+        old, new = (part.strip(' ，,。.!！"') for part in match.groups())
         if not old or not new or old == new:
             continue
         item = _base(text, message_id, key=key, tag="correction")

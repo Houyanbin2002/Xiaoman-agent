@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from collections.abc import Mapping
 
@@ -44,6 +45,36 @@ def memory_scope(value: object) -> str:
 
 def memory_boundary(subject: object, scope: object) -> tuple[str, str]:
     return memory_subject(subject), memory_scope(scope)
+
+
+def preference_slot(raw: Mapping[str, object], attributes: Mapping[str, object]) -> str:
+    """Shared candidate/write identity; normalization never creates a candidate."""
+    supplied = str(attributes.get("preference_key") or "").strip().lower()
+    if supplied and re.fullmatch(r"[a-z][a-z0-9_]{1,63}", supplied):
+        return supplied
+    if str(raw.get("tag") or "").strip().lower() not in {"preference", "correction"}:
+        return ""
+    text = " ".join(
+        str(raw.get(name) or "")
+        for name in ("content", "predicate", "value", "replaces")
+    ).casefold()
+    aliases = (
+        ("code_language", ("python", "javascript", "代码示例", "编程语言")),
+        ("timezone", ("asia/shanghai", "时区")),
+        ("response_style", ("先给结论", "简短步骤", "回复风格")),
+        ("response_length", ("三段以内", "回复长度", "写得很长")),
+        ("document_format", ("markdown", "表格", "分点说明", "方案格式")),
+        (
+            "notification_quiet_hours",
+            ("免打扰", "不要主动提醒", "提醒限制", "晚上九点", "晚上十点"),
+        ),
+        ("communication_channel", ("当前对话", "当前会话", "外部群", "发群")),
+        ("active_project", ("当前主要关注", "旧项目", "xiaoman 项目")),
+    )
+    return next(
+        (key for key, needles in aliases if any(needle in text for needle in needles)),
+        "",
+    )
 
 
 def preference_record_key(slot: str, subject: object, scope: object) -> str:

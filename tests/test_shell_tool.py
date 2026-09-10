@@ -20,6 +20,65 @@ from agent.tools.shell import (
 _KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
+@pytest.mark.asyncio
+async def test_owned_background_cleanup_preserves_other_turn_and_detached_service(monkeypatch):
+    from agent.tools.shell import cancel_owned_processes, shell_execution_owner
+
+    processes = []
+
+    class RunningProc(_FakeProc):
+        def __init__(self):
+            super().__init__(returncode=None)
+            self.exited = asyncio.Event()
+
+        async def wait(self):
+            await self.exited.wait()
+
+    async def spawn(*args, **kwargs):
+        proc = RunningProc()
+        processes.append(proc)
+        return proc
+
+    def kill(proc):
+        proc.returncode = -9
+        proc.exited.set()
+
+    monkeypatch.setattr("agent.tools.shell.asyncio.create_subprocess_shell", spawn)
+    monkeypatch.setattr("agent.tools.shell._kill_process_tree", kill)
+    tool = ShellTool()
+    tasks = []
+    try:
+        for owner, detached in [("a", False), ("b", False), ("a", True)]:
+            token = shell_execution_owner.set(owner)
+            try:
+                result = json.loads(await tool.execute(command="worker", description="test", run_in_background=True, detached=detached, timeout=60))
+                tasks.append(_BG_REGISTRY[result["background_task_id"]])
+            finally:
+                shell_execution_owner.reset(token)
+        await cancel_owned_processes("a")
+        assert processes[0].returncode == -9
+        assert tasks[0].pump_task.done()
+        assert tasks[0].timeout_handle.cancelled()
+        assert not Path(tasks[0].log_path).exists()
+        assert processes[1].returncode is None
+        assert processes[2].returncode is None
+    finally:
+        await cancel_owned_processes("b")
+        # Explicitly clean up this test's detached service, not global tasks.
+        for task_id, task in list(_BG_REGISTRY.items()):
+            if task in tasks:
+                await ShellTaskStopTool().execute(task_id=task_id)
+        await asyncio.gather(*(t.pump_task for t in tasks), return_exceptions=True)
+        for task in tasks:
+            Path(task.log_path).unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_detached_requires_explicit_background_mode():
+    result = json.loads(await ShellTool().execute(command="worker", description="test", detached=True))
+    assert "run_in_background" in str(result)
+
+
 class _FakeProc:
     def __init__(
         self, stdout: str = "", stderr: str = "", returncode: int | None = 0

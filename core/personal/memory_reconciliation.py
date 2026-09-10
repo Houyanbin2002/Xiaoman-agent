@@ -51,6 +51,9 @@ def normalize_memory_text(value: object) -> str:
     return _TRAILING_PUNCTUATION.sub("", text)
 
 
+from core.personal.memory_scope import memory_boundary, preference_record_key
+
+
 class MemoryReconciler:
     """Deterministic identity and relation rules for governed personal memory.
 
@@ -67,6 +70,9 @@ class MemoryReconciler:
         supplied_key: str = "",
     ) -> MemoryIdentity:
         explicit_key = supplied_key.strip()
+        slot = str(memory.attributes.get("preference_key") or "").strip()
+        if slot and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", slot):
+            explicit_key = preference_record_key(slot, memory.subject, memory.scope)
         if explicit_key:
             return MemoryIdentity(
                 record_key=explicit_key,
@@ -124,6 +130,8 @@ class MemoryReconciler:
             )
 
         existing_identity = self._identity_from_record(existing)
+        if memory_boundary(existing.data.get("subject"), existing.data.get("scope")) != memory_boundary(candidate.subject, candidate.scope):
+            return MemoryReconciliation(identity=identity, relation=MemorySemanticRelation.INDEPENDENT, reason="different_subject_or_scope")
         existing_content = normalize_memory_text(
             existing.data.get("content") or existing.summary
         )

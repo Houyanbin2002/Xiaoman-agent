@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -47,7 +48,8 @@ def _confidence(value: object) -> float:
     if not isinstance(value, (int, float, str)):
         return 0.0
     try:
-        return max(0.0, min(1.0, float(value)))
+        number = float(value)
+        return max(0.0, min(1.0, number)) if math.isfinite(number) else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -76,6 +78,12 @@ class RecentActivityCandidate:
     importance: int = 0
     occurred_at: str = ""
     source_message_ids: tuple[str, ...] = ()
+    title: str = ""
+    status: str = "unknown"
+    activity_id: str = ""
+    expected_revision: int = 0
+    expires_at: str = ""
+    reopen: bool = False
 
     @property
     def emotional_weight(self) -> int:
@@ -104,6 +112,12 @@ class RecentActivityCandidate:
             importance=weight,
             occurred_at=_text(raw.get("occurred_at"), limit=80),
             source_message_ids=_refs(raw.get("source_message_ids")),
+            title=_text(raw.get("title"), limit=200),
+            status=str(raw.get("status")) if raw.get("status") in {"planned", "active", "completed", "cancelled", "dismissed"} else "unknown",
+            activity_id=_text(raw.get("activity_id"), limit=100),
+            expected_revision=raw["expected_revision"] if type(raw.get("expected_revision")) is int and raw["expected_revision"] > 0 else 0,
+            expires_at=_text(raw.get("expires_at"), limit=80),
+            reopen=raw.get("reopen") is True,
         )
 
     def to_mapping(self) -> dict[str, object]:
@@ -112,6 +126,12 @@ class RecentActivityCandidate:
             "importance": self.importance,
             "occurred_at": self.occurred_at,
             "source_message_ids": list(self.source_message_ids),
+            "title": self.title,
+            "status": self.status,
+            "activity_id": self.activity_id,
+            "expected_revision": self.expected_revision,
+            "expires_at": self.expires_at,
+            "reopen": self.reopen,
         }
 
 
@@ -120,7 +140,7 @@ class MemoryCandidate:
     tag: str
     content: str
     confidence: float = 0.0
-    origin: str = "explicit_user"
+    origin: str = "inferred_pattern"
     evidence_refs: tuple[str, ...] = ()
     subject: str = ""
     predicate: str = ""
@@ -131,6 +151,7 @@ class MemoryCandidate:
     valid_from: str = ""
     expires_at: str = ""
     source_message_id: str = ""
+    evidence_quote: str = ""
 
     @property
     def extraction_confidence(self) -> float:
@@ -150,7 +171,7 @@ class MemoryCandidate:
             if isinstance(raw_attributes, Mapping)
             else {}
         )
-        default_origin = "user_correction" if tag == "correction" else "explicit_user"
+        default_origin = "inferred_pattern"
         return cls(
             tag=tag,
             content=content,
@@ -166,6 +187,7 @@ class MemoryCandidate:
             valid_from=_text(raw.get("valid_from"), limit=64),
             expires_at=_text(raw.get("expires_at"), limit=64),
             source_message_id=source_message_id,
+            evidence_quote=_text(raw.get("evidence_quote"), limit=1200),
         )
 
     def to_mapping(self) -> dict[str, object]:
@@ -184,6 +206,7 @@ class MemoryCandidate:
             "valid_from": self.valid_from,
             "expires_at": self.expires_at,
             "source_message_id": self.source_message_id,
+            "evidence_quote": self.evidence_quote,
         }
 
 

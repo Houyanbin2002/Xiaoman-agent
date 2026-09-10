@@ -61,6 +61,12 @@ keep_recent_tool_rounds = 3
 cold_tool_result_chars = 1800
 recent_tool_result_chars = 12000
 
+# 执行思考等级：不按任务文本分类；每个执行的选择保存进 checkpoint。
+[agent.reasoning]
+default_effort = "medium" # none / minimal / low / medium / high / xhigh / max
+subagent_effort = ""     # 留空不强制覆盖子任务传入的选择
+workflow_effort = ""     # 留空不强制覆盖 workflow 传入的选择
+
 # AgentLoop 防失控：状态直接持久化进 LangGraph checkpoint。
 [agent.guard]
 enabled = true
@@ -86,6 +92,14 @@ subagent_result_chars = 12000
 workflow_max_concurrency = 2
 workflow_step_timeout_seconds = 4200
 workflow_max_subagent_steps = 4
+# 与思考等级独立；Dashboard 每轮可显式开启，其他渠道采用此默认值。
+autonomous_delegation = false
+# 一个发起回合跨 Workflow 累计创建的自动执行步骤（重试不增加创建数）。
+delegation_max_children = 8
+# 主/子模型调用累计输入+输出；缓存输入也计入，非金额或单次上下文大小。
+# 接近阈值时阻止子执行器继续调用，不硬停主 Agent。重试/重启不重置。
+delegation_total_tokens = 500000
+delegation_reserve_tokens = 32000
 
 [agent.tools]
 search_enabled = true

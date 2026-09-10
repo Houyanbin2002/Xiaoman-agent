@@ -13,6 +13,8 @@ from agent.tools.workflow import (
 )
 from agent.tools.base import Tool
 from agent.tools.registry import ToolRegistry
+from agent.runtime.reasoning_policy import WORKFLOW_REASONING_CONTEXT_KEY
+from agent.runtime.execution_guard import ExecutionGuardConfig
 from agent.workflows.runtime import WorkflowRuntime
 from core.workflow.models import (
     StepExecutor,
@@ -398,6 +400,88 @@ class _FakeSubagentExecutor:
         return "独立调研已经完成"
 
 
+class _ReasoningLoop:
+    def __init__(self) -> None:
+        self.reasoning_effort = ""
+
+    async def process_direct(self, _content: str, **kwargs: Any) -> str:
+        self.reasoning_effort = str(kwargs.get("reasoning_effort") or "")
+        return "done"
+
+
+def test_workflow_runtime_reads_only_persisted_reasoning_choice(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    runtime = WorkflowRuntime(
+        store=store,
+        agent_loop_provider=lambda: None,
+        push_tool=_FakePush(),  # type: ignore[arg-type]
+    )
+    workflow = runtime.create_workflow(
+        name="reasoning",
+        goal="keep choice",
+        steps=[_spec("inspect")],
+        session_key="dashboard:test",
+        channel="dashboard",
+        chat_id="test",
+        context={WORKFLOW_REASONING_CONTEXT_KEY: "high"},
+    )
+    assert runtime._workflow_reasoning_effort(workflow) == "high"
+    workflow.context[WORKFLOW_REASONING_CONTEXT_KEY] = "adaptive"
+    assert runtime._workflow_reasoning_effort(workflow) == ""
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_task_create_persists_trusted_parent_reasoning_choice(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    runtime = WorkflowRuntime(
+        store=store,
+        agent_loop_provider=lambda: None,
+        push_tool=_FakePush(),  # type: ignore[arg-type]
+    )
+    result = await TaskCreateTool(runtime).execute(
+        name="durable reasoning",
+        goal="inherit parent setting",
+        current_reasoning_effort="high",
+        context={"topic": "test"},
+        steps=[{"id": "step", "title": "Step", "description": "inspect"}],
+    )
+    assert '"created": true' in result
+    workflow = store.list_workflows()[0]
+    assert {
+        key: value
+        for key, value in workflow.context.items()
+        if key != "_runtime_delegation"
+    } == {
+        "topic": "test",
+        WORKFLOW_REASONING_CONTEXT_KEY: "high",
+    }
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_workflow_step_inherits_persisted_reasoning_choice(tmp_path: Path):
+    store = WorkflowStore(tmp_path / "workflows.db")
+    loop = _ReasoningLoop()
+    runtime = WorkflowRuntime(
+        store=store,
+        agent_loop_provider=lambda: loop,
+        push_tool=_FakePush(),  # type: ignore[arg-type]
+    )
+    workflow = runtime.create_workflow(
+        name="agent step",
+        goal="inherit",
+        steps=[_spec("step")],
+        session_key="dashboard:test",
+        channel="dashboard",
+        chat_id="test",
+        context={WORKFLOW_REASONING_CONTEXT_KEY: "xhigh"},
+    )
+    await runtime._run_step_executor(workflow, workflow.steps[0], "do it")
+    assert loop.reasoning_effort == "xhigh"
+    store.close()
+
+
 class _ReadDataTool(Tool):
     name = "read_data"
     description = "Read test data"
@@ -755,6 +839,7 @@ async def test_runtime_uses_subagent_as_a_tracked_step_executor(tmp_path: Path):
     push = _FakePush()
     executor = _FakeSubagentExecutor()
     runtime = WorkflowRuntime(
+        delegation_guard=ExecutionGuardConfig(autonomous_delegation=True),
         store=store,
         agent_loop_provider=lambda: None,
         push_tool=push,  # type: ignore[arg-type]
@@ -965,6 +1050,7 @@ async def test_replan_requires_fresh_approval_for_new_side_effect(tmp_path: Path
 async def test_task_tools_are_the_unified_public_surface(tmp_path: Path):
     store = WorkflowStore(tmp_path / "workflows.db")
     runtime = WorkflowRuntime(
+        delegation_guard=ExecutionGuardConfig(autonomous_delegation=True),
         store=store,
         agent_loop_provider=lambda: None,
         push_tool=_FakePush(),  # type: ignore[arg-type]

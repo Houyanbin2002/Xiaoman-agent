@@ -196,7 +196,8 @@ def test_agent_kernel_forwards_selected_reasoning_to_every_model_step() -> None:
     }
 
 
-def test_agent_kernel_keeps_same_reasoning_after_tool_round() -> None:
+@pytest.mark.parametrize("iterations", [1, 2])
+def test_agent_kernel_keeps_same_reasoning_after_tool_round(iterations: int) -> None:
     class _TwoStepProvider(_Provider):
         async def chat(self, **kwargs: Any) -> LLMResponse:
             self.calls.append(kwargs)
@@ -218,6 +219,7 @@ def test_agent_kernel_keeps_same_reasoning_after_tool_round() -> None:
     provider = _TwoStepProvider()
     reasoner = _reasoner(provider)
     reasoner._tools.register(cast(Any, _ProbeTool()))
+    reasoner._llm_config.max_iterations = iterations
 
     asyncio.run(
         reasoner.run(
@@ -310,6 +312,14 @@ async def test_checkpoint_resume_keeps_original_reasoning_selection(tmp_path) ->
         await interrupted
 
     provider.block = False
+    graph = await first._kernel._graph_executor._compiled_graph()
+    graph_config = {"configurable": {"thread_id": "agent:subagent:reasoning-resume-1"}}
+    snapshot = await graph.aget_state(graph_config)
+    saved_budget_id = snapshot.values["delegation"]["budget_id"]
+    used_before_restart = runtime.delegation_ledger.used(saved_budget_id)
+    assert used_before_restart > 0  # cancelled requests retain a reservation
+    await runtime.aclose()
+    runtime = LangGraphRuntime(tmp_path / "reasoning-checkpoints.db")
     restored = SubAgent(
         provider=cast(Any, provider),
         model="deepseek-v4-pro-0813",
@@ -323,9 +333,90 @@ async def test_checkpoint_resume_keeps_original_reasoning_selection(tmp_path) ->
     )
 
     assert result == "resumed"
+    restored_graph = await restored._kernel._graph_executor._compiled_graph()
+    restored_snapshot = await restored_graph.aget_state(graph_config)
+    assert restored_snapshot.values["delegation"]["budget_id"] == saved_budget_id
+    assert runtime.delegation_ledger.used(saved_budget_id) > used_before_restart
     assert len(provider.calls) == 2
     assert all(call["disable_thinking"] is False for call in provider.calls)
     assert all(
         call["extra_body"]["reasoning_effort"] == "max" for call in provider.calls
     )
     await runtime.aclose()
+
+
+@pytest.mark.parametrize("effort", ["none", "low", "max"])
+@pytest.mark.asyncio
+async def test_tool_creation_inherits_requested_not_provider_mapped_effort(effort):
+    captured = {}
+
+    class Creation(Tool):
+        name = "task_create"
+        description = "test trusted context"
+        parameters = {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+    class Provider(_Provider):
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="create-1",
+                            name="task_create",
+                            arguments={"current_reasoning_effort": "high"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="done")
+
+    provider = Provider()
+    reasoner = _reasoner(provider)
+    reasoner._tools.register(Creation())
+    try:
+        result = await reasoner.run(
+            [{"role": "user", "content": "test"}], reasoning_effort=effort
+        )
+        assert captured["current_reasoning_effort"] == effort
+        assert result.metadata["delegation"]["allowed"] is False
+        assert len(provider.calls) == 2  # no extra complexity-classifier call
+    finally:
+        await reasoner._graph_executor._runtime.aclose()
+
+
+@pytest.mark.parametrize(
+    "legacy", ["enable_thinking = false", 'thinking = { type = "disabled" }']
+)
+def test_legacy_explicit_disable_survives_new_policy(tmp_path, legacy):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'provider = "openai"\nmodel = "test"\n[llm.main]\n' + legacy, encoding="utf-8"
+    )
+    assert load_config(path).reasoning.default_effort == "none"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + '\n[agent.reasoning]\ndefault_effort = "high"',
+        encoding="utf-8",
+    )
+    assert load_config(path).reasoning.default_effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_subagent_applies_configured_override_to_request():
+    provider = _Provider()
+    agent = SubAgent(
+        provider=cast(Any, provider),
+        model="qwen3.7-plus",
+        tools=[],
+        reasoning_config=ReasoningPolicyConfig(subagent_effort="low"),
+    )
+    assert await agent.run("任务", reasoning_effort="max") == "done"
+    assert provider.calls[0]["extra_body"] == {
+        "enable_thinking": True,
+        "thinking_budget": 4096,
+    }

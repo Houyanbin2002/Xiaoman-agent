@@ -32,9 +32,10 @@ class ProactiveDashboardReader:
             "tick_steps": self._count("tick_step_log"),
         }
         with self._lock:
-            recent_tick = self._db.execute("""
+            recent_tick = self._db.execute(f"""
                 SELECT tick_id, session_key, started_at, finished_at, gate_exit,
-                       terminal_action, skip_reason, steps_taken, drift_entered
+                       terminal_action, skip_reason, steps_taken, drift_entered,
+                       {self._delivery_status_column()}
                 FROM tick_log
                 ORDER BY started_at DESC
                 LIMIT 1
@@ -162,7 +163,8 @@ class ProactiveDashboardReader:
                 "tick_id, session_key, started_at, finished_at, gate_exit, "
                 "terminal_action, skip_reason, steps_taken, alert_count, "
                 "content_count, context_count, interesting_ids, discarded_ids, "
-                "cited_ids, drift_entered, final_message, proactive_effects_json"
+                "cited_ids, drift_entered, final_message, proactive_effects_json, "
+                + self._delivery_status_column()
             ),
             row_mapper=self._row_to_tick_log,
         )
@@ -170,17 +172,30 @@ class ProactiveDashboardReader:
     def get_tick_log(self, tick_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._db.execute(
-                """
+                f"""
                 SELECT tick_id, session_key, started_at, finished_at, gate_exit,
                        terminal_action, skip_reason, steps_taken, alert_count,
                        content_count, context_count, interesting_ids, discarded_ids,
-                       cited_ids, drift_entered, final_message, proactive_effects_json
+                       cited_ids, drift_entered, final_message, proactive_effects_json,
+                       {self._delivery_status_column()}
                 FROM tick_log
                 WHERE tick_id = ?
                 """,
                 (tick_id,),
             ).fetchone()
         return self._row_to_tick_log(row) if row is not None else None
+
+    def _delivery_status_column(self) -> str:
+        # Read historical databases without mutating them or inventing delivery receipts.
+        with self._lock:
+            columns = {
+                row["name"] for row in self._db.execute("PRAGMA table_info(tick_log)")
+            }
+        return (
+            "delivery_status"
+            if "delivery_status" in columns
+            else "'unknown' AS delivery_status"
+        )
 
     def list_tick_steps(self, tick_id: str) -> list[dict[str, Any]]:
         with self._lock:

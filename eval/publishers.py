@@ -32,12 +32,19 @@ class LangfuseScorePublisher:
             _publish_score(
                 create_score,
                 trace_id,
-                Score("eval_reward", result.reward, result.passed, reason="aggregated reward"),
+                Score(
+                    "eval_reward",
+                    result.reward,
+                    result.passed,
+                    reason="aggregated reward",
+                ),
                 summary,
             )
 
 
-def _publish_score(create_score: Any, trace_id: str, score: Score, summary: EvalSummary) -> None:
+def _publish_score(
+    create_score: Any, trace_id: str, score: Score, summary: EvalSummary
+) -> None:
     create_score(
         name=score.name,
         value=score.value,
@@ -72,7 +79,9 @@ def _resolve_trace_id(client: Any, trace_id: str) -> str:
         return trace_id
 
 
-def publish_best_effort(summary: EvalSummary, publishers: Iterable[ScorePublisher]) -> list[str]:
+def publish_best_effort(
+    summary: EvalSummary, publishers: Iterable[ScorePublisher]
+) -> list[str]:
     """Publish to optional sinks and return non-fatal error messages."""
     errors: list[str] = []
     for publisher in publishers:

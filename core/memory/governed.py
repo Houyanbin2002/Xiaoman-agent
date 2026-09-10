@@ -1,10 +1,14 @@
 from __future__ import annotations
+from core.personal.memory_scope import (
+    memory_boundary,
+    preference_record_key,
+    preference_slot,
+)
 
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-import re
 
 from core.memory.personal_core import PersonalCoreMemorySelector
 from core.memory.personal_retrieval import (
@@ -297,10 +301,24 @@ class GovernedLongTermMemory:
             category = self._category_for_tag(tag)
             replaces = str(raw.get("replaces") or "").strip()
             replaced = (
-                self._find_replaced(active, replaces) if tag == "correction" else None
+                self._find_replaced(
+                    [
+                        record
+                        for record in active
+                        if memory_boundary(
+                            record.data.get("subject"), record.data.get("scope")
+                        )
+                        == memory_boundary(raw.get("subject"), raw.get("scope"))
+                    ],
+                    replaces,
+                )
+                if tag == "correction"
+                else None
             )
             record_key = (
-                f"memory:preference:{preference_key}"
+                preference_record_key(
+                    preference_key, raw.get("subject"), raw.get("scope")
+                )
                 if preference_key
                 else replaced.record_key if replaced is not None else ""
             )
@@ -317,12 +335,12 @@ class GovernedLongTermMemory:
             )
             confidence = self._confidence(raw.get("confidence"), tag=tag)
             origin = str(raw.get("origin") or "").strip().lower()
-            user_confirmed = bool(
-                source_message_id
-                and raw.get("_user_evidence_verified") is True
-                and origin in {"explicit_user", "user_correction"}
-            )
-            actor = "user" if user_confirmed else "assistant"
+            user_confirmed = False
+            actor = "assistant"
+            quote_verified = raw.get("_evidence_quote_verified") is True
+            review_reason = "" if quote_verified else "unverified_extraction_evidence"
+            if origin == "user_correction" or tag == "correction":
+                review_reason = "extracted_correction_requires_confirmation"
 
             result = self.governance.propose(
                 memory=MemoryData(
@@ -347,6 +365,11 @@ class GovernedLongTermMemory:
                 actor=actor,
                 user_confirmed=user_confirmed,
                 explicit_replaces=bool(replaces),
+                review_reason=review_reason,
+                evidence_quote=(
+                    str(raw.get("evidence_quote") or "") if quote_verified else ""
+                ),
+                evidence_context=str(raw.get("evidence_context") or ""),
             )
             if result.status in {"created", "superseded"}:
                 created += 1
@@ -385,7 +408,7 @@ class GovernedLongTermMemory:
         """
 
         result: list[Mapping[str, object] | None] = []
-        positions: dict[tuple[str, str], int] = {}
+        positions: dict[tuple[str, str, tuple[str, str]], int] = {}
         for raw in candidates:
             attributes_raw = raw.get("attributes")
             attributes = (
@@ -401,7 +424,11 @@ class GovernedLongTermMemory:
             # semantic tag, decides whether two candidates would write the
             # same record key.
             identity = (
-                (source_message_id, slot)
+                (
+                    source_message_id,
+                    slot,
+                    memory_boundary(raw.get("subject"), raw.get("scope")),
+                )
                 if source_message_id and slot
                 else None
             )
@@ -427,33 +454,7 @@ class GovernedLongTermMemory:
         never create a memory candidate by themselves.
         """
 
-        supplied = str(attributes.get("preference_key") or "").strip().lower()
-        if supplied and re.fullmatch(r"[a-z][a-z0-9_]{1,63}", supplied):
-            return supplied
-        tag = str(raw.get("tag") or "").strip().lower()
-        if tag not in {"preference", "correction"}:
-            return ""
-        text = " ".join(
-            str(raw.get(name) or "")
-            for name in ("content", "predicate", "value", "replaces")
-        ).casefold()
-        aliases = (
-            ("code_language", ("python", "javascript", "代码示例", "编程语言")),
-            ("timezone", ("asia/shanghai", "时区")),
-            ("response_style", ("先给结论", "简短步骤", "回复风格")),
-            ("response_length", ("三段以内", "回复长度", "写得很长")),
-            ("document_format", ("markdown", "表格", "分点说明", "方案格式")),
-            (
-                "notification_quiet_hours",
-                ("免打扰", "不要主动提醒", "提醒限制", "晚上九点", "晚上十点"),
-            ),
-            ("communication_channel", ("当前对话", "当前会话", "外部群", "发群")),
-            ("active_project", ("当前主要关注", "旧项目", "xiaoman 项目")),
-        )
-        return next(
-            (key for key, needles in aliases if any(needle in text for needle in needles)),
-            "",
-        )
+        return preference_slot(raw, attributes)
 
     def _prompt_visible_records(self) -> list[PersonalRecord]:
         self.governance.personal_data.expire_due()

@@ -336,6 +336,7 @@ def build_core_runtime(
         loop_deps,
         AgentLoopConfig(
             llm=LLMConfig(
+                reasoning=config.reasoning,
                 model=loop_model,
                 light_model=config.light_model,
                 max_iterations=config.max_iterations,
@@ -403,12 +404,14 @@ def build_core_runtime(
     conversation_memory_consumer = ConversationMemoryBatchConsumer(
         markdown=memory_runtime.markdown.store,
         candidate_sink=governed_long_term.ingest_candidates,
+        message_source=session_manager._store.fetch_session_messages,
     )
     conversation_memory_unsubscribe = event_bus.on(
         ConversationSemanticBatchCommitted,
         conversation_memory_consumer.handle,
     )
     conversation_semantics = build_conversation_semantics_runtime(
+        activity_context_provider=memory_runtime.markdown.store.activity_snapshot,
         config=config.conversation_semantics,
         workspace=workspace,
         provider=light_provider or provider,

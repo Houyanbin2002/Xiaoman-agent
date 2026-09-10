@@ -9,6 +9,7 @@ from agent.background.subagent_executor import SubagentExecutor
 from agent.runtime.langgraph_runtime import LangGraphRuntime
 from agent.subagent import SubAgent
 from core.llm import LLMResponse
+from agent.runtime.execution_policy import IncompleteExecutionError
 
 
 class _Provider:
@@ -95,6 +96,22 @@ async def test_executor_turns_subagent_error_exit_into_task_failure(tmp_path):
 
     with pytest.raises(RuntimeError, match="subagent execution failed"):
         await executor.execute(task="fail", label=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["tool_loop", "forced_summary", "turn_timeout", "context_budget", "no_progress"])
+async def test_guard_summary_is_not_successful_step_output(tmp_path, reason):
+    executor = _executor(tmp_path)
+
+    class StoppedAgent:
+        last_exit_reason = reason
+
+        async def run(self, *args, **kwargs):
+            return "文件尚未生成，需要继续处理。"
+
+    executor._build_subagent = lambda **kwargs: StoppedAgent()
+    with pytest.raises(IncompleteExecutionError, match=reason):
+        await executor.execute(task="generate file", label="file")
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from agent.config_models import Config
 from core.llm import LLMProvider, LLMResponse
 from bus.events_lifecycle import TurnCommitted
 from core.conversation_semantics.events import ConversationSemanticBatchCommitted
+from core.conversation_semantics.evidence import execution_call_outcome
 from core.conversation_semantics.models import ExecutionMemoryCandidate
 from core.memory.engine import (
     EngineProfile,
@@ -31,6 +32,13 @@ from core.memory.engine import (
     MemoryToolSpec,
 )
 from core.memory.execution import ExecutionMemoryState
+from core.memory.activity import (
+    ActivityResolver,
+    activity_entries,
+    activity_label,
+    activity_states,
+    current_activity_evidence,
+)
 from core.memory.utils import (
     evidence_from_source_ref,
     resolve_memory_scope,
@@ -56,12 +64,6 @@ _HYPOTHESIS_TIMEOUT_S = 3.0
 _VECTOR_SCORE_THRESHOLD = 0.35
 _VECTOR_TOP_K = 15
 _ChatCall = Callable[..., Awaitable[LLMResponse]]
-
-
-def _build_entry_source_ref(base_source_ref: str, entry: str) -> str:
-    text = (entry or "").strip()
-    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12] if text else "empty"
-    return f"{base_source_ref}#h:{digest}"
 
 
 def _build_rule_source_ref(base_source_ref: str, summary: str) -> str:
@@ -91,24 +93,23 @@ def _source_ref_message_ids(source_ref: str) -> list[str]:
     return values
 
 
-def _exact_execution_target_id(
-    store: MemoryStore2,
-    candidate: ExecutionMemoryCandidate,
-) -> str:
-    """Resolve invalidation by exact id or one exact normalized summary only."""
-
-    target_id = candidate.target_memory_id.strip()
-    if target_id and store.execution.get(target_id) is not None:
-        return target_id
-    target_summary = " ".join(candidate.target_summary.split()).casefold()
-    if not target_summary:
-        return ""
-    matches = [
-        str(row.get("id") or "")
-        for row in store.execution.list(include_inactive=True, limit=5000)
-        if " ".join(str(row.get("summary") or "").split()).casefold() == target_summary
-    ]
-    return matches[0] if len(matches) == 1 else ""
+def _deterministic_rule_failure(call: Mapping[str, object]) -> bool:
+    result = call.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            return False
+    if not isinstance(result, Mapping):
+        return False
+    error = result.get("error")
+    code = error.get("code") if isinstance(error, Mapping) else result.get("error_code")
+    return str(code or "").lower() in {
+        "invalid_arguments",
+        "validation_error",
+        "unsupported_parameter",
+        "unsupported_operation",
+    }
 
 
 def _undo_store_by_message_sources(
@@ -369,8 +370,10 @@ class DefaultMemoryEngine:
         light_provider: LLMProvider | None = None,
         http_resources: SharedHttpResources,
         event_publisher: "EventBus | None" = None,
+        activity_resolver: ActivityResolver | None = None,
     ) -> None:
         self._config = config
+        self._activity_resolver = activity_resolver
         self._default_config = default_config
         self._workspace = workspace
         self._provider = provider
@@ -528,8 +531,9 @@ class DefaultMemoryEngine:
         retrieval = (event.extra or {}).get("memory_retrieval")
         if not isinstance(retrieval, Mapping):
             return
-        raw_ids = retrieval.get("used_execution_memory_ids")
-        if not isinstance(raw_ids, list):
+        uses = retrieval.get("execution_memory_uses")
+        retrieved = retrieval.get("execution_memory_ids")
+        if not isinstance(uses, dict) or not isinstance(retrieved, list):
             return
         calls = [
             call
@@ -541,9 +545,21 @@ class DefaultMemoryEngine:
         if not calls:
             return
         evidence_ref = f"{event.session_key}@{event.timestamp.isoformat() if event.timestamp else 'turn'}"
-        for item_id in dict.fromkeys(
-            str(item) for item in raw_ids if str(item).strip()
-        ):
+        valid_uses = {
+            key: values
+            for key, values in uses.items()
+            if key in retrieved
+            and isinstance(values, list)
+            and values
+            and all(isinstance(value, str) and value for value in values)
+        }
+        for item_id, call_ids in valid_uses.items():
+            if any(
+                set(call_ids) & set(other)
+                for key, other in valid_uses.items()
+                if key != item_id
+            ):
+                continue
             state = store.execution.get(item_id)
             item = store.get_item_for_dashboard(item_id)
             if state is None or item is None:
@@ -552,39 +568,39 @@ class DefaultMemoryEngine:
             if not required_tools:
                 continue
             matching = [
-                call
-                for call in calls
-                if any(
-                    _tool_name_matches(str(call.get("name") or ""), required)
-                    for required in required_tools
-                )
+                call for call in calls if str(call.get("call_id") or "") in call_ids
             ]
-            if not matching:
-                continue
-            statuses = {str(call.get("status") or "").lower() for call in matching}
-            if "error" in statuses:
-                store.execution.record_outcome(
-                    item_id,
-                    success=False,
-                    evidence_ref=evidence_ref,
-                )
-                continue
-            if (
-                statuses
-                and statuses <= {"success"}
-                and all(
-                    any(
-                        _tool_name_matches(str(call.get("name") or ""), required)
-                        and str(call.get("status") or "").lower() == "success"
-                        for call in matching
-                    )
-                    for required in required_tools
-                )
+            if any(
+                sum(str(call.get("call_id") or "") == call_id for call in matching) != 1
+                for call_id in call_ids
             ):
+                continue
+            if not all(
+                any(
+                    _tool_name_matches(str(call.get("name") or ""), required)
+                    for call in matching
+                )
+                for required in required_tools
+            ):
+                continue
+            outcomes = {
+                execution_call_outcome(
+                    status=str(call.get("status") or "").lower(),
+                    result=call.get("result"),
+                )
+                for call in matching
+            }
+            if outcomes == {"success"}:
                 store.execution.record_outcome(
                     item_id,
                     success=True,
                     evidence_ref=evidence_ref,
+                )
+            elif outcomes == {"failure"} and all(
+                _deterministic_rule_failure(call) for call in matching
+            ):
+                store.execution.record_outcome(
+                    item_id, success=False, evidence_ref=evidence_ref
                 )
 
     async def _on_semantic_batch_committed(
@@ -593,14 +609,16 @@ class DefaultMemoryEngine:
     ) -> None:
         save_coros = [
             self._save_from_consolidation(
-                history_entry=entry.summary,
+                history_entry=f"历史活动记录（非当前待办，状态 {entry.status}）：{entry.summary}",
                 behavior_updates=[],
-                source_ref=_build_entry_source_ref(event.batch_id, entry.summary),
+                source_ref=f"{event.batch_id}:activity:{index}",
                 scope_channel=event.channel,
                 scope_chat_id=event.chat_id,
                 emotional_weight=entry.emotional_weight,
+                activity_update_ref=f"update:{event.batch_id}:activity:{index}",
+                happened_at=entry.occurred_at or None,
             )
-            for entry in event.payload.recent_activity_entries
+            for index, entry in enumerate(activity_entries(event))
         ]
         if save_coros:
             await asyncio.gather(*save_coros)
@@ -612,7 +630,6 @@ class DefaultMemoryEngine:
         event: ConversationSemanticBatchCommitted,
         candidate: ExecutionMemoryCandidate,
     ) -> None:
-        store = self._v2_store
         user_ids = set(event.user_message_ids) & set(event.message_ids)
         episode_ids = set(event.execution_episode_ids)
         explicit = candidate.origin in {"explicit_user", "user_correction"}
@@ -623,9 +640,9 @@ class DefaultMemoryEngine:
             ):
                 logger.info("execution candidate rejected: unverified user authority")
                 return
-            authority = "user"
-            lifecycle = "active"
-            user_locked = True
+            authority = "learned"
+            lifecycle = "proposed"
+            user_locked = False
         else:
             if (
                 not episode_ids.intersection(candidate.evidence_refs)
@@ -638,17 +655,10 @@ class DefaultMemoryEngine:
             user_locked = False
 
         if candidate.operation in {"suspend", "supersede"}:
-            if store is None or not explicit:
-                logger.info("execution invalidation rejected: exact target required")
-                return
-            target_id = _exact_execution_target_id(store, candidate)
-            if not target_id:
-                logger.info("execution invalidation rejected: exact target not found")
-                return
-            if candidate.operation == "supersede":
-                store.execution.mark_superseded([target_id])
-            else:
-                store.execution.suspend([target_id])
+            logger.info(
+                "execution invalidation requires explicit confirmation; batch=%s",
+                event.batch_id,
+            )
             return
 
         required_tools = list(candidate.required_tools)
@@ -656,13 +666,13 @@ class DefaultMemoryEngine:
             observed_tools = set(event.execution_tool_names)
             required_tools = [tool for tool in required_tools if tool in observed_tools]
         source_ref = _build_rule_source_ref(event.batch_id, candidate.summary)
-        result = await self._remember(
+        await self._remember(
             MemoryMutation(
                 kind="remember",
                 summary=candidate.summary,
                 memory_kind="procedure",
                 source_ref=source_ref,
-                user_confirmed=explicit,
+                user_confirmed=False,
                 metadata={
                     "tool_requirement": required_tools[0] if required_tools else "",
                     "required_tools": required_tools,
@@ -678,20 +688,12 @@ class DefaultMemoryEngine:
                     "lifecycle_status": lifecycle,
                     "user_locked": user_locked,
                     "extraction_confidence": candidate.confidence,
-                    "execution_verified": candidate.outcome == "success"
-                    and not explicit,
+                    "execution_verified": False,
                     "evidence_refs": list(candidate.evidence_refs),
                 },
             )
         )
-        if not result.item_id or explicit or store is None:
-            return
-        if candidate.outcome in {"success", "failure"}:
-            store.execution.record_outcome(
-                result.item_id,
-                success=candidate.outcome == "success",
-                evidence_ref=next(iter(candidate.evidence_refs), source_ref),
-            )
+        # Extraction labels are hypotheses, not independently observed reuse.
 
     def tool_profile(self) -> MemoryToolProfile:
         return _default_memory_tool_profile()
@@ -724,6 +726,7 @@ class DefaultMemoryEngine:
             memory_types = ["preference", "profile", "event"]
         items = await self._retrieve_related(
             request.text,
+            current_context=True,
             memory_types=memory_types,
             top_k=request.limit,
             scope_channel=scope.channel or None,
@@ -1090,6 +1093,8 @@ class DefaultMemoryEngine:
         scope_channel: str,
         scope_chat_id: str,
         emotional_weight: int = 0,
+        activity_update_ref: str = "",
+        happened_at: str | None = None,
     ) -> None:
         if self._memorizer is None:
             return
@@ -1100,6 +1105,8 @@ class DefaultMemoryEngine:
             scope_channel=scope_channel,
             scope_chat_id=scope_chat_id,
             emotional_weight=emotional_weight,
+            activity_update_ref=activity_update_ref,
+            happened_at=happened_at,
         )
 
     async def _query_answer(
@@ -1214,16 +1221,18 @@ class DefaultMemoryEngine:
         time_start: datetime | None = None,
         time_end: datetime | None = None,
         keyword_enabled: bool = True,
+        current_context: bool = False,
     ) -> list[dict[str, object]]:
         retriever = self._retriever
         if retriever is None:
             return []
-        return cast(
+        requested_k = top_k or self._default_config.retrieval.top_k_history
+        items = cast(
             list[dict[str, object]],
             await retriever.retrieve(
                 query,
                 memory_types=memory_types,
-                top_k=top_k,
+                top_k=min(100, requested_k * 5) if current_context else top_k,
                 scope_channel=scope_channel,
                 scope_chat_id=scope_chat_id,
                 require_scope_match=require_scope_match,
@@ -1234,6 +1243,46 @@ class DefaultMemoryEngine:
                 keyword_enabled=keyword_enabled,
             ),
         )
+        return self._resolve_activity_hits(items, current_context=current_context)[
+            :requested_k
+        ]
+
+    def _resolve_activity_hits(
+        self, items: list[dict[str, object]], *, current_context: bool
+    ) -> list[dict[str, object]]:
+        resolver = getattr(self, "_activity_resolver", None)
+        if resolver is None:
+            return items
+        refs = [
+            (
+                str(extra.get("activity_update_ref") or "")
+                if isinstance(extra := item.get("extra_json"), dict)
+                else ""
+            )
+            for item in items
+        ]
+        resolved = resolver([ref for ref in refs if ref])
+        result = []
+        for item, ref in zip(items, refs):
+            states = activity_states([ref], resolved)
+            if (
+                current_context
+                and ref
+                and (not states or not current_activity_evidence(states))
+            ):
+                continue
+            if ref:
+                label = activity_label(states) or "状态未确认"
+                item = {
+                    **item,
+                    "summary": f"[历史证据；事项当前状态：{label}] {item.get('summary', '')}",
+                    "extra_json": {
+                        **cast(dict, item.get("extra_json") or {}),
+                        "activity_states": states,
+                    },
+                }
+            result.append(item)
+        return result
 
     async def _gen_hypothesis(self, query: str, style: str) -> str | None:
         prompt = _explicit_hypothesis_prompt(query, style)

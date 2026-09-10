@@ -15,7 +15,9 @@ from eval.analysis import failure_hotspots
 @pytest.mark.asyncio
 async def test_smoke_dataset_is_fully_evaluable():
     cases = load_cases("eval/datasets/smoke.jsonl")
-    summary = await EvalHarness(dataset_name="smoke", version="v1").run(cases, ReplayExecutor())
+    summary = await EvalHarness(dataset_name="smoke", version="v1").run(
+        cases, ReplayExecutor()
+    )
 
     assert summary.total == 6
     assert summary.passed == 6
@@ -111,8 +113,17 @@ def test_langfuse_publisher_maps_local_trace_id_to_remote_trace_id():
             self.calls.append(kwargs)
 
     client = Client()
-    case = EvalCase.from_dict({"case_id": "lf-map", "title": "lf", "input": "x", "expected": {"response_contains": ["ok"]}})
-    summary = EvalHarness().run_sync([case], lambda _case: AgentRun(response="ok", trace_id="local-1"))
+    case = EvalCase.from_dict(
+        {
+            "case_id": "lf-map",
+            "title": "lf",
+            "input": "x",
+            "expected": {"response_contains": ["ok"]},
+        }
+    )
+    summary = EvalHarness().run_sync(
+        [case], lambda _case: AgentRun(response="ok", trace_id="local-1")
+    )
     LangfuseScorePublisher(client).publish(summary)
     assert client.calls
     assert {call["trace_id"] for call in client.calls} == {"remote:local-1"}
@@ -150,7 +161,9 @@ def test_openai_compatible_judge_parses_structured_scores():
         model="judge-model",
         client=_Client(),
     )
-    assert judge(case, AgentRun(response="summary")) == {"quality": 0.86}
+    judgment = judge(case, AgentRun(response="summary"))
+    assert judgment == {"quality": 0.86}
+    assert judgment.reasons == {"quality": "完整"}
 
 
 def test_openai_compatible_judge_retries_malformed_json():
@@ -164,11 +177,7 @@ def test_openai_compatible_judge_retries_malformed_json():
 
         def create(self, **kwargs):
             self.calls += 1
-            content = (
-                "not json"
-                if self.calls == 1
-                else '{"scores":{"quality":0.75}}'
-            )
+            content = "not json" if self.calls == 1 else '{"scores":{"quality":0.75}}'
             message = _Message(content)
             return type(
                 "Response",
@@ -264,7 +273,10 @@ async def test_rubric_is_single_contract_with_deterministic_and_llm_backends():
 
     assert result.passed is True
     assert {score.name for score in result.scores} == {"forbidden_tools", "quality"}
-    assert next(score for score in result.scores if score.name == "quality").source == "rubric_judge"
+    assert (
+        next(score for score in result.scores if score.name == "quality").source
+        == "rubric_judge"
+    )
 
 
 @pytest.mark.asyncio
@@ -278,7 +290,9 @@ async def test_regression_gate_detects_case_failure():
         }
     )
     baseline = await EvalHarness().run([case], lambda _case: AgentRun(response="ok"))
-    candidate = await EvalHarness().run([case], lambda _case: AgentRun(response="no", tools=(ToolCall("delete"),)))
+    candidate = await EvalHarness().run(
+        [case], lambda _case: AgentRun(response="no", tools=(ToolCall("delete"),))
+    )
     result = compare(baseline, candidate)
     assert result.passed is False
     assert "case_failed:gate" in result.regressions
@@ -307,7 +321,58 @@ def test_tool_capability_aliases_match_concrete_installation_names():
     result = summary.results[0]
 
     assert result.passed is True
-    assert all(score.passed for score in result.scores if score.name in {"required_tools", "trajectory"})
+    assert all(
+        score.passed
+        for score in result.scores
+        if score.name in {"required_tools", "trajectory"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_objective_and_delivery_are_separate_hard_outcomes():
+    case = EvalCase.from_dict(
+        {
+            "case_id": "outcomes",
+            "title": "outcomes",
+            "input": "make and send a file",
+            "expected": {
+                "objective_outcome": "completed",
+                "delivery_status": "delivered",
+            },
+        }
+    )
+    run = AgentRun(
+        response="已生成文件",
+        metadata={"objective_outcome": "completed", "delivery_status": "queued"},
+    )
+    summary = await EvalHarness().run([case], lambda _case: run)
+    result = summary.results[0]
+    assert result.passed is False
+    assert summary.metrics["objective_completed_cases"] == 1
+    assert summary.metrics["delivery_succeeded_cases"] == 0
+    assert any(
+        score.name == "delivery_status" and not score.passed for score in result.scores
+    )
+
+
+def test_required_tool_status_does_not_accept_failed_invocation():
+    case = EvalCase.from_dict(
+        {
+            "case_id": "tool-status",
+            "title": "tool status",
+            "input": "read",
+            "expected": {
+                "required_tool_status": {"read_file": "completed"},
+            },
+        }
+    )
+    run = AgentRun(tools=(ToolCall("read_file", status="failed"),))
+    result = EvalHarness().run_sync([case], lambda _case: run).results[0]
+    assert result.passed is False
+    status_score = next(
+        score for score in result.scores if score.name == "required_tool_status"
+    )
+    assert status_score.passed is False
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,10 @@ class ExecutionGuardConfig:
     workflow_max_concurrency: int = 2
     workflow_step_timeout_seconds: float = 4200.0
     workflow_max_subagent_steps: int = 4
+    autonomous_delegation: bool = False
+    delegation_max_children: int = 8
+    delegation_total_tokens: int = 500_000
+    delegation_reserve_tokens: int = 32_000
 
     def normalized(self) -> "ExecutionGuardConfig":
         warn = max(2, int(self.same_signature_warn))
@@ -91,6 +95,16 @@ class ExecutionGuardConfig:
                 10.0, float(self.workflow_step_timeout_seconds)
             ),
             workflow_max_subagent_steps=max(1, int(self.workflow_max_subagent_steps)),
+            autonomous_delegation=bool(self.autonomous_delegation),
+            delegation_max_children=max(1, int(self.delegation_max_children)),
+            delegation_total_tokens=max(64_000, int(self.delegation_total_tokens)),
+            delegation_reserve_tokens=max(
+                8_000,
+                min(
+                    int(self.delegation_reserve_tokens),
+                    max(64_000, int(self.delegation_total_tokens)) // 2,
+                ),
+            ),
         )
 
     def for_subagent(self) -> "ExecutionGuardConfig":
@@ -223,11 +237,7 @@ class ExecutionGuard:
         if has_side_effect and same_seen:
             return GuardDecision(state, stop_reason="duplicate_side_effect")
 
-        consecutive = 1
-        for item in reversed(recent):
-            if item.get("signature") != signature:
-                break
-            consecutive += 1
+        consecutive = 1 + _stagnant_repetitions(recent, signature)
         if consecutive >= self.config.same_signature_stop:
             return GuardDecision(state, stop_reason="tool_call_loop")
         return GuardDecision(state)
@@ -253,7 +263,14 @@ class ExecutionGuard:
         repeated_result = bool(
             result_digest and result_digest == previous.get("result_digest")
         )
-        no_progress = all_failed or repeated_result
+        healthy_poll = all(
+            _call_name(call) in _POLLING_TOOLS
+            and str(call.get("status") or "") in {"success", "completed"}
+            for call in calls
+        )
+        # An unchanged running-process snapshot is not a failed attempt. Polling
+        # is still bounded by the turn's time, tool-call and output budgets.
+        no_progress = not healthy_poll and (all_failed or repeated_result)
         no_progress_streak = (
             int(state.get("no_progress_streak") or 0) + 1 if no_progress else 0
         )
@@ -291,11 +308,7 @@ class ExecutionGuard:
 
         hints: list[str] = []
         if signature:
-            consecutive = 0
-            for item in reversed(recent):
-                if item.get("signature") != signature:
-                    break
-                consecutive += 1
+            consecutive = _stagnant_repetitions(recent, signature)
             if consecutive >= self.config.same_signature_warn:
                 hints.append(
                     "相同工具和参数已经重复且没有证明获得新进展。下一步必须更换方法，"
@@ -477,13 +490,35 @@ def _result_digest(calls: Sequence[Mapping[str, Any]]) -> str:
     payload = [
         {
             "name": _call_name(call),
+            "arguments": _call_arguments(call),
             "status": str(call.get("status") or ""),
-            "result": str(call.get("result") or "")[:8_000],
+            "result_sha256": hashlib.sha256(
+                str(call.get("result") or "").encode("utf-8")
+            ).hexdigest(),
         }
         for call in calls
     ]
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]
+
+
+def _stagnant_repetitions(
+    recent: Sequence[Mapping[str, Any]], signature: str
+) -> int:
+    """Count repeated observations, not merely repeated requests."""
+    if not recent or recent[-1].get("signature") != signature:
+        return 0
+    latest = recent[-1]
+    count = 0
+    for item in reversed(recent):
+        if item.get("signature") != signature:
+            break
+        same_result = item.get("result_digest") == latest.get("result_digest")
+        both_failed = item.get("all_failed") and latest.get("all_failed")
+        if not (same_result or both_failed):
+            break
+        count += 1
+    return count
 
 
 def _is_oscillation(recent: Sequence[Mapping[str, Any]]) -> bool:

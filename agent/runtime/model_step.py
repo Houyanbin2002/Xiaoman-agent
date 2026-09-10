@@ -8,6 +8,8 @@ from typing import Any
 
 from core.llm import LLMProvider, LLMResponse, StreamDelta
 from core.tracing import new_span_id, record_trace_event
+from agent.runtime.delegation import current_scope
+from core.llm.request_budget import before_transport_retry
 
 
 async def run_model_step(
@@ -31,6 +33,28 @@ async def run_model_step(
     span_id = new_span_id()
     started_wall = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
+    scope = current_scope.get()
+    # Reserve before dispatch, so parallel siblings cannot all spend the same
+    # remaining tokens. Unknown/failed calls keep this conservative estimate.
+    reserved = (
+        (
+            max_tokens
+            + len(
+                json.dumps([messages, tools], ensure_ascii=False, default=str).encode(
+                    "utf-8"
+                )
+            )
+        )
+        if scope is not None
+        else 0
+    )
+    if scope is not None:
+        scope.ledger.reserve(scope.key, reserved, child=scope.child)
+    retry_token = before_transport_retry.set(
+        (lambda: scope.ledger.reserve(scope.key, reserved, child=scope.child))
+        if scope is not None
+        else None
+    )
     try:
         response = await provider.chat(
             messages=messages,
@@ -66,7 +90,18 @@ async def run_model_step(
             },
         )
         raise
+    finally:
+        before_transport_retry.reset(retry_token)
 
+    if scope is not None:
+        actual = getattr(response, "total_tokens", None)
+        if not actual:
+            input_tokens = getattr(response, "input_tokens", None)
+            output_tokens = getattr(response, "output_tokens", None)
+            if input_tokens is not None and output_tokens is not None:
+                actual = input_tokens + output_tokens
+        if actual is not None and actual > 0:
+            scope.ledger.settle(scope.key, reserved, int(actual))
     tool_calls = list(getattr(response, "tool_calls", ()) or ())
     tool_names = [str(getattr(call, "name", "") or "") for call in tool_calls]
     tool_names = [name for name in tool_names if name]
@@ -83,6 +118,8 @@ async def run_model_step(
             "source": source,
             "iteration": iteration,
             "model": model,
+            "delegation_budget_id": scope.key if scope else None,
+            "delegation_budget_used": scope.ledger.used(scope.key) if scope else None,
             "input": _trace_snapshot(messages, max_chars=24000),
             "output": _trace_snapshot(
                 {

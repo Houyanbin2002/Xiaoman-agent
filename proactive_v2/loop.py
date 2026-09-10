@@ -30,7 +30,8 @@ from core.llm import LLMProvider
 from agent.tool_hooks import ToolHook
 from agent.tools.message_push import MessagePushTool
 from agent.tools.registry import ToolRegistry
-from agent.turns.outbound import PushToolOutboundPort
+from agent.turns.outbound import OutboundDispatch
+from proactive_v2.outbound import ProactiveOutboundPort
 from agent.turns.orchestrator import TurnOrchestrator, TurnOrchestratorDeps
 from bus.event_bus import EventBus
 from core.common.strategy_trace import build_strategy_trace_envelope
@@ -104,6 +105,7 @@ class ProactiveLoop:
 
     def _init_runtime_state(self, config: ProactiveConfig) -> None:
         self._running = False
+        self._delivery_stopped = False
         self._wake_event = asyncio.Event()
         self._tick_lock = asyncio.Lock()
 
@@ -117,13 +119,14 @@ class ProactiveLoop:
         return ProactiveStateStore(state_path or Path("proactive.db"))
 
     def _build_turn_orchestrator(self) -> TurnOrchestrator:
+        self._delivery_port = ProactiveOutboundPort(self._push, state=self._state, allowed=self._delivery_allowed, dedupe_hours=self._cfg.delivery_dedupe_hours)
         return TurnOrchestrator(
             TurnOrchestratorDeps(
                 session=SessionServices(
                     session_manager=self._sessions,
                     presence=self._presence,
                 ),
-                outbound=PushToolOutboundPort(self._push),
+                outbound=self._delivery_port,
             )
         )
 
@@ -133,6 +136,15 @@ class ProactiveLoop:
             sessions=self._sessions,
             presence=self._presence,
         )
+
+    def _delivery_allowed(self, outbound: OutboundDispatch) -> bool:
+        if self._delivery_stopped or not self._cfg.enabled:
+            return False
+        if (outbound.channel, outbound.chat_id) != (self._cfg.default_channel, self._cfg.default_chat_id):
+            return False
+        if self._passive_busy_fn and self._passive_busy_fn(str(outbound.metadata.get("session_key") or "")):
+            return False
+        return self._personal_source.delivery_allowed(list(outbound.metadata.get("evidence") or []), channel=outbound.channel) if self._personal_source is not None else True
 
     def _build_agent_tick(self):
         from proactive_v2.agent_tick_factory import AgentTickDeps, AgentTickFactory
@@ -307,6 +319,7 @@ class ProactiveLoop:
 
     async def run(self) -> None:
         self._running = True
+        self._delivery_stopped = False
         logger.info(
             f"ProactiveLoop 已启动  "
             f"目标={self._cfg.default_channel}:{self._cfg.default_chat_id}"
@@ -362,6 +375,8 @@ class ProactiveLoop:
 
     def stop(self) -> None:
         self._running = False
+        self._delivery_stopped = True
+        self._delivery_port.cancel_pending()
         self.request_tick()
 
     # ── internal ──────────────────────────────────────────────────

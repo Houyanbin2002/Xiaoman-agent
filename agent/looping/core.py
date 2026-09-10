@@ -27,6 +27,7 @@ from agent.looping.ports import (
 )
 from agent.retrieval.default_pipeline import DefaultMemoryRetrievalPipeline
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.reasoning_policy import normalize_reasoning_effort
 from agent.turns.outbound import BusOutboundPort
 
 # Re-export for backward-compat: existing callers import these from core.py
@@ -754,6 +755,9 @@ class AgentLoop:
         trace_id: str = "",
         trace_flow: str = "workflow",
         trace_title: str = "",
+        reasoning_effort: str = "",
+        autonomous_delegation: bool | None = None,
+        require_completed: bool = False,
     ) -> str:
         response = await self.process_direct_outbound(
             content,
@@ -771,7 +775,19 @@ class AgentLoop:
             trace_id=trace_id,
             trace_flow=trace_flow,
             trace_title=trace_title,
+            reasoning_effort=reasoning_effort,
+            autonomous_delegation=autonomous_delegation,
         )
+        if require_completed:
+            from agent.runtime.execution_policy import IncompleteExecutionError
+
+            trace = (response.metadata or {}).get("context_retry") if response else None
+            reason = str(trace.get("exit_reason") or "unknown") if isinstance(trace, dict) else "unknown"
+            if reason != "completed" or not response.content.strip():
+                raise IncompleteExecutionError(
+                    reason if reason != "completed" else "empty_result",
+                    response.content if response else "",
+                )
         return response.content if response else ""
 
     async def process_direct_outbound(
@@ -791,8 +807,17 @@ class AgentLoop:
         trace_id: str = "",
         trace_flow: str = "workflow",
         trace_title: str = "",
+        reasoning_effort: str = "",
+        autonomous_delegation: bool | None = None,
     ) -> OutboundMessage:
         metadata: dict[str, object] = {}
+        if autonomous_delegation is not None:
+            if not isinstance(autonomous_delegation, bool):
+                raise ValueError("autonomous_delegation 必须是布尔值")
+            metadata["autonomous_delegation"] = autonomous_delegation
+        selected_effort = normalize_reasoning_effort(reasoning_effort)
+        if selected_effort:
+            metadata["reasoning_effort"] = selected_effort
         trace_id = trace_id or current_trace_id()
         if omit_user_turn:
             metadata["omit_user_turn"] = True

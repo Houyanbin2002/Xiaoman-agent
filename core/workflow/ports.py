@@ -92,6 +92,7 @@ class WorkflowStorePort(Protocol):
         *,
         error: str,
         retry_delay_seconds: float,
+        retryable: bool = True,
     ) -> WorkflowInstance: ...
 
     def respond_to_step(

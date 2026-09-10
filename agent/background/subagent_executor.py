@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
+from agent.runtime.reasoning_policy import ReasoningPolicyConfig
 
 from agent.background.subagent_profiles import (
     PROFILE_RESEARCH,
@@ -12,6 +13,7 @@ from agent.background.subagent_profiles import (
 )
 from agent.subagent import SubAgent
 from agent.runtime.execution_guard import ExecutionGuardConfig, bound_tool_result
+from agent.runtime.execution_policy import IncompleteExecutionError
 from agent.runtime.langgraph_runtime import LangGraphRuntime
 from agent.tools.base import ToolResult
 from agent.tool_hooks.base import ToolHook
@@ -35,6 +37,7 @@ class SubagentExecutor:
         fetch_requester: HttpRequester,
         multimodal: bool = True,
         execution_guard: ExecutionGuardConfig | None = None,
+        reasoning: ReasoningPolicyConfig | None = None,
     ) -> None:
         self._guard_config = (execution_guard or ExecutionGuardConfig()).normalized()
         self._workspace = workspace
@@ -47,6 +50,7 @@ class SubagentExecutor:
             max_tokens=max_tokens,
             execution_guard=self._guard_config,
             graph_runtime=self._graph_runtime,
+            reasoning=reasoning or ReasoningPolicyConfig(),
         )
         self._fetch_requester = fetch_requester
         self._multimodal = multimodal
@@ -65,6 +69,7 @@ class SubagentExecutor:
         label: str | None,
         profile: str = PROFILE_RESEARCH,
         execution_id: str | None = None,
+        reasoning_effort: str = "",
     ) -> str:
         """Run a step inline so Task Runtime owns status, retry, and cancellation."""
         run_id = self._validated_run_id(execution_id)
@@ -79,8 +84,11 @@ class SubagentExecutor:
         )
         subagent = self._build_subagent(task_dir=task_dir, profile=profile)
         try:
+            run_kwargs: dict[str, object] = {"execution_id": run_id}
+            if reasoning_effort:
+                run_kwargs["reasoning_effort"] = reasoning_effort
             result = await asyncio.wait_for(
-                subagent.run(task, execution_id=run_id),
+                subagent.run(task, **run_kwargs),  # type: ignore[arg-type]
                 timeout=self._guard_config.subagent_timeout_seconds,
             )
         except TimeoutError as exc:
@@ -96,6 +104,10 @@ class SubagentExecutor:
         exit_reason = getattr(subagent, "last_exit_reason", None) or "completed"
         if exit_reason == "error":
             raise RuntimeError("subagent execution failed")
+        if exit_reason != "completed" or not result.strip():
+            raise IncompleteExecutionError(
+                exit_reason if exit_reason != "completed" else "empty_result", result
+            )
         result = self._truncate_result(result)
         logger.info(
             "subagent step finished run_id=%s exit_reason=%s result_len=%d",

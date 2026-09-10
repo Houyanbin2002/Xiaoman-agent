@@ -81,7 +81,7 @@ async def test_tool_registry_context_is_isolated_between_concurrent_turns():
 
 
 @pytest.mark.asyncio
-async def test_message_push_tool_covers_success_failure_and_fallbacks():
+async def test_message_push_tool_covers_success_failure_and_fallbacks(tmp_path):
     tool = MessagePushTool()
     sent = {"text": [], "stream_text": [], "file": [], "image": []}
 
@@ -104,11 +104,13 @@ async def test_message_push_tool_covers_success_failure_and_fallbacks():
         file=file,
         image=image,
     )
+    demo_file = tmp_path / "demo.txt"
+    demo_file.write_text("demo", encoding="utf-8")
     result = await tool.execute(
         channel="telegram",
         chat_id=123,
         message="hello",
-        file="/tmp/demo.txt",
+        file=str(demo_file),
         image="https://img",
     )
 
@@ -117,11 +119,11 @@ async def test_message_push_tool_covers_success_failure_and_fallbacks():
     assert "图片已发送" in result
     assert sent["text"] == []
     assert sent["stream_text"] == [("123", "hello")]
-    assert sent["file"] == [("123", "/tmp/demo.txt", "demo.txt")]
+    assert sent["file"] == [("123", str(demo_file), "demo.txt")]
     assert sent["image"] == [("123", "https://img")]
 
     assert await tool.execute(channel="telegram", chat_id=1) == (
-        "错误：message、file、image 至少提供一个"
+        "工具执行出错: 错误：message、file、image 至少提供一个"
     )
     assert "未注册" in await tool.execute(channel="qq", chat_id=1, message="x")
 

@@ -8,6 +8,7 @@ from proactive_v2.config import ProactiveConfig
 from agent.runtime.context_compaction import ContextCompactionConfig
 from agent.runtime.prompt_cache import PromptCacheConfig
 from agent.runtime.execution_guard import ExecutionGuardConfig
+from agent.runtime.reasoning_policy import ReasoningPolicyConfig
 
 
 @dataclass
@@ -108,6 +109,7 @@ class Config:
     max_tokens: int = 8192
     max_iterations: int = 10
     memory_window: int = 40
+    reasoning: ReasoningPolicyConfig = field(default_factory=ReasoningPolicyConfig)
     base_url: str | None = None
     extra_body: dict = field(default_factory=dict)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
@@ -138,9 +140,7 @@ class Config:
         default_factory=ContextCompactionConfig
     )
     prompt_cache: PromptCacheConfig = field(default_factory=PromptCacheConfig)
-    execution_guard: ExecutionGuardConfig = field(
-        default_factory=ExecutionGuardConfig
-    )
+    execution_guard: ExecutionGuardConfig = field(default_factory=ExecutionGuardConfig)
     dev_mode: bool = False
     peer_agents: list[PeerAgentConfig] = field(default_factory=list)
     wiring: WiringConfig = field(default_factory=WiringConfig)

@@ -48,6 +48,40 @@ class ProactiveStateStore:
             self._closed = True
             self._db.close()
 
+    def claim_delivery_attempt(
+        self, session_key: str, delivery_key: str, token: str, *, dedupe_hours: int
+    ) -> bool:
+        now = _utcnow()
+        with self._lock:
+            cursor = self._db.execute(
+                """INSERT INTO delivery_attempts VALUES(?,?,?,'sending',?)
+                ON CONFLICT(session_key,delivery_key) DO UPDATE SET token=excluded.token,status='sending',updated_at=excluded.updated_at
+                WHERE (delivery_attempts.status='failed' AND delivery_attempts.updated_at < ?)
+                   OR (delivery_attempts.status='accepted' AND delivery_attempts.updated_at < ?)""",
+                (
+                    session_key,
+                    delivery_key,
+                    token,
+                    now.isoformat(),
+                    (now - timedelta(minutes=5)).isoformat(),
+                    (now - timedelta(hours=max(1, dedupe_hours))).isoformat(),
+                ),
+            )
+            self._db.commit()
+            return cursor.rowcount == 1
+
+    def finish_delivery_attempt(
+        self, session_key: str, delivery_key: str, token: str, status: str
+    ) -> None:
+        if status not in {"accepted", "failed", "unknown"}:
+            raise ValueError("invalid delivery outcome")
+        with self._lock:
+            self._db.execute(
+                "UPDATE delivery_attempts SET status=?,updated_at=? WHERE session_key=? AND delivery_key=? AND token=? AND status='sending'",
+                (status, _utcnow().isoformat(), session_key, delivery_key, token),
+            )
+            self._db.commit()
+
     def record_tick_log_start(
         self,
         *,
@@ -90,6 +124,7 @@ class ProactiveStateStore:
         drift_entered: bool,
         final_message: str,
         proactive_effects: list[dict[str, Any]] | None = None,
+        delivery_status: str = "unknown",
     ) -> None:
         with self._lock:
             self._ensure_tick_log_effects_column()
@@ -99,8 +134,8 @@ class ProactiveStateStore:
                     tick_id, session_key, started_at, finished_at, gate_exit,
                     terminal_action, skip_reason, steps_taken, alert_count,
                     content_count, context_count, interesting_ids, discarded_ids,
-                    cited_ids, drift_entered, final_message, proactive_effects_json
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cited_ids, drift_entered, final_message, proactive_effects_json, delivery_status
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tick_id) DO UPDATE SET
                     session_key = excluded.session_key,
                     started_at = excluded.started_at,
@@ -117,7 +152,8 @@ class ProactiveStateStore:
                     cited_ids = excluded.cited_ids,
                     drift_entered = excluded.drift_entered,
                     final_message = excluded.final_message,
-                    proactive_effects_json = excluded.proactive_effects_json
+                    proactive_effects_json = excluded.proactive_effects_json,
+                    delivery_status = excluded.delivery_status
                 """,
                 (
                     tick_id,
@@ -137,6 +173,7 @@ class ProactiveStateStore:
                     int(drift_entered),
                     final_message,
                     json.dumps(proactive_effects or [], ensure_ascii=False),
+                    delivery_status,
                 ),
             )
             self._db.commit()
@@ -320,6 +357,11 @@ class ProactiveStateStore:
 
     def _init_schema(self) -> None:
         self._db.executescript("""
+            CREATE TABLE IF NOT EXISTS delivery_attempts (
+                session_key TEXT NOT NULL, delivery_key TEXT NOT NULL,
+                token TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(session_key,delivery_key)
+            );
             CREATE TABLE IF NOT EXISTS deliveries (
                 session_key TEXT NOT NULL,
                 delivery_key TEXT NOT NULL,
@@ -386,6 +428,7 @@ class ProactiveStateStore:
             CREATE INDEX IF NOT EXISTS idx_tick_step_log_tick_step
             ON tick_step_log(tick_id, step_index);
             """)
+        self._ensure_tick_log_effects_column()
         self._db.commit()
 
     def _ensure_tick_log_effects_column(self) -> None:
@@ -394,7 +437,13 @@ class ProactiveStateStore:
             for row in self._db.execute("PRAGMA table_info(tick_log)").fetchall()
         }
         if "proactive_effects_json" not in columns:
-            self._db.execute("ALTER TABLE tick_log ADD COLUMN proactive_effects_json TEXT")
+            self._db.execute(
+                "ALTER TABLE tick_log ADD COLUMN proactive_effects_json TEXT"
+            )
+        if "delivery_status" not in columns:
+            self._db.execute(
+                "ALTER TABLE tick_log ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'unknown'"
+            )
 
     def _get_session_datetime(self, session_key: str, key: str) -> datetime | None:
         with self._lock:

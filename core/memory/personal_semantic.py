@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.personal.memory_scope import render_memory_content
 
 import asyncio
 from collections.abc import Mapping, Sequence
@@ -151,7 +152,7 @@ class PersonalSemanticRecallService:
 
 
 def _record_text(record: PersonalRecord) -> str:
-    content = str(record.data.get("content") or record.summary or record.title).strip()
+    content = render_memory_content(record.data, record.summary or record.title)
     tags = " ".join(
         str(item) for item in record.data.get("tags", []) if str(item).strip()
     )

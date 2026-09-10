@@ -1,13 +1,16 @@
 """
-Embedding 客户端，对接 DashScope text-embedding-v3（OpenAI 兼容接口）
+Embedding 客户端，对接配置指定的 OpenAI 兼容嵌入接口。
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 
 from core.net.http import HttpRequester, RequestBudget, get_default_http_requester
+from core.memory.query_embeddings import query_embeddings
+from core.memory.query_embeddings import query_embedding_scope as query_embedding_scope
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,38 @@ class Embedder:
         self._requester = requester or get_default_http_requester("external_default")
 
     async def embed(self, text: str) -> list[float]:
-        """单条 embed"""
+        """Singleflight for identical effective requests; callers own their copy."""
+        text = text[: self.MAX_TEXT_LEN]
+        scope = query_embeddings.get()
+        if scope is None or scope.closed:
+            return await self._embed_one(text)
+        key = (
+            type(self),
+            self._url,
+            hashlib.sha256(self._key.encode()).hexdigest(),
+            self._model,
+            self._output_dimensionality,
+            text,
+        )
+        task = scope.tasks.get(key)
+        if task is None:
+            # Bounded to the request. Unusual oversized workloads still work,
+            # but do not keep an unbounded number of vectors alive.
+            if len(scope.tasks) >= 128:
+                return await self._embed_one(text)
+            task = asyncio.create_task(self._embed_one(text))
+            scope.tasks[key] = task
+
+            def discard_failure(done: asyncio.Task[list[float]]) -> None:
+                failed = done.cancelled() or done.exception() is not None
+                if failed and scope.tasks.get(key) is done:
+                    del scope.tasks[key]
+
+            task.add_done_callback(discard_failure)
+        # A timeout on one retrieval lane must not cancel the shared request.
+        return list(await asyncio.shield(task))
+
+    async def _embed_one(self, text: str) -> list[float]:
         results = await self.embed_batch([text])
         return results[0]
 

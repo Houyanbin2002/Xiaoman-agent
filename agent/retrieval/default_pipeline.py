@@ -22,6 +22,7 @@ from core.memory.engine import (
 )
 from core.memory.personal_retrieval import PersonalMemoryQueryResult
 from core.tracing import record_trace_event
+from core.memory.query_embeddings import query_embedding_scope
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class DefaultMemoryRetrievalPipeline(MemoryRetrievalPipeline):
         self._source_timeout_s = max(0.05, float(source_timeout_s))
 
     # 被动预检索入口：只转换请求形状，检索语义统一交给 MemoryEngine。
+    @query_embedding_scope()
     async def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         started = time.perf_counter()
         started_at = datetime.now(timezone.utc).isoformat()

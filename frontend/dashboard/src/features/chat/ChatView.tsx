@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, Download, FileText, Hand, LoaderCircle, Maximize2, Plus, Send, ShieldAlert, ShieldCheck, Square, SquareTerminal, Upload, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, Download, FileText, Hand, LoaderCircle, Maximize2, Plus, Send, ShieldAlert, ShieldCheck, Square, SquareTerminal, Upload, Users, X } from "lucide-react";
 import { api } from "../../api";
 import { MarkdownView } from "../../MarkdownView";
 import type { MessageRow, PageResult } from "../../types";
@@ -15,6 +15,7 @@ interface ActiveRun {
 }
 
 type PermissionMode = "request_approval" | "auto_approve" | "full_access";
+type ReasoningEffort = "" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 interface PendingApproval {
   id: string;
@@ -34,6 +35,8 @@ interface ChatEvent {
   content?: string;
   thinking?: string;
   permission_mode?: string;
+  reasoning_effort?: string;
+  autonomous_delegation?: boolean;
   delta?: string;
   message?: string;
   approval_id?: string;
@@ -82,6 +85,7 @@ function clipboardImageFiles(clipboardData: DataTransfer): File[] {
 }
 
 const PERMISSION_STORAGE_KEY = "xiaoman:chat-permission-mode";
+const REASONING_STORAGE_KEY = "xiaoman:chat-reasoning-effort";
 const TOOL_ACTION_LABELS: Record<string, string> = {
   write_file: "写入文件",
   edit_file: "编辑文件",
@@ -106,6 +110,16 @@ const PERMISSION_OPTIONS: Array<{
   { value: "auto_approve", label: "替我审批", description: "仅对删除、外部路径等风险操作询问", icon: SquareTerminal },
   { value: "full_access", label: "完全访问权限", description: "不限制访问互联网和电脑文件", icon: ShieldCheck },
 ];
+const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string; description: string }> = [
+  { value: "", label: "默认", description: "使用系统配置的默认等级" },
+  { value: "none", label: "关闭", description: "优先快速响应，不启用深度思考" },
+  { value: "minimal", label: "最小", description: "仅做必要推理" },
+  { value: "low", label: "低", description: "适合简单问答和轻量操作" },
+  { value: "medium", label: "中", description: "速度与推理质量平衡" },
+  { value: "high", label: "高", description: "适合复杂分析和多步执行" },
+  { value: "xhigh", label: "极高", description: "投入更多推理预算" },
+  { value: "max", label: "最高", description: "使用模型支持的最高预算" },
+];
 
 function isPermissionMode(value: unknown): value is PermissionMode {
   return value === "request_approval" || value === "auto_approve" || value === "full_access";
@@ -117,6 +131,19 @@ function initialPermissionMode(): PermissionMode {
     return isPermissionMode(stored) ? stored : "request_approval";
   } catch {
     return "request_approval";
+  }
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return value === "" || value === "none" || value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
+}
+
+function initialReasoningEffort(): ReasoningEffort {
+  try {
+    const stored = window.localStorage.getItem(REASONING_STORAGE_KEY);
+    return isReasoningEffort(stored) ? stored : "";
+  } catch {
+    return "";
   }
 }
 
@@ -195,6 +222,51 @@ function PermissionSelector(props: {
   );
 }
 
+function ReasoningSelector(props: {
+  value: ReasoningEffort;
+  onChange: (value: ReasoningEffort) => void;
+  disabled: boolean;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = REASONING_OPTIONS.find((option) => option.value === props.value) ?? REASONING_OPTIONS[0];
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (event: MouseEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div className="reasoning-control" ref={rootRef}>
+      <button type="button" className="reasoning-trigger" onClick={() => setOpen((current) => !current)} disabled={props.disabled} aria-haspopup="menu" aria-expanded={open} title={`思考等级：${selected.label}`}>
+        <SquareTerminal size={15} />
+        <span>思考 {selected.label}</span>
+        <ChevronDown size={12} />
+      </button>
+      {open ? (
+        <div className="reasoning-menu" role="menu" aria-label="思考等级">
+          <div className="reasoning-menu-head"><strong>思考等级</strong><small>只影响之后发送的新任务</small></div>
+          {REASONING_OPTIONS.map((option) => (
+            <button type="button" role="menuitemradio" aria-checked={option.value === props.value} key={option.value || "default"} onClick={() => { props.onChange(option.value); setOpen(false); }}>
+              <span><strong>{option.label}</strong><small>{option.description}</small></span>
+              {option.value === props.value ? <Check size={16} /> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ApprovalCard(props: {
   approval: PendingApproval;
   responding: boolean;
@@ -226,6 +298,10 @@ function CompactComposer(props: {
   disabled: boolean;
   permissionMode: PermissionMode;
   setPermissionMode: (mode: PermissionMode) => void;
+  reasoningEffort: ReasoningEffort;
+  setReasoningEffort: (effort: ReasoningEffort) => void;
+  autonomousDelegation: boolean;
+  setAutonomousDelegation: (allowed: boolean) => void;
   attachments: UploadedAttachment[];
   uploadingCount: number;
   onChooseFiles: (files: FileList | File[]) => void;
@@ -244,6 +320,8 @@ function CompactComposer(props: {
         <button type="button" className="compact-plus" onClick={() => fileInputRef.current?.click()} title="添加文件" aria-label="添加文件"><Plus size={22} /></button>
         <PermissionSelector value={props.permissionMode} onChange={props.setPermissionMode} disabled={props.busy} />
         <textarea value={props.input} onChange={(event) => props.setInput(event.target.value)} onPaste={(event) => { const images = clipboardImageFiles(event.clipboardData); if (!images.length) return; event.preventDefault(); props.onChooseFiles(images); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (!props.busy && canSend && !props.uploadingCount) props.send(); } }} placeholder={props.busy ? "当前回复生成中，可先输入下一条消息" : props.attachments.length ? "告诉小满要如何处理这些文件" : "问问小满"} rows={1} />
+        <ReasoningSelector value={props.reasoningEffort} onChange={props.setReasoningEffort} disabled={props.busy} />
+        <button type="button" className="reasoning-trigger delegation-trigger" disabled={props.busy} aria-label={props.autonomousDelegation ? "关闭自主多 Agent" : "开启自主多 Agent"} aria-pressed={props.autonomousDelegation} onClick={() => props.setAutonomousDelegation(!props.autonomousDelegation)} title="允许自主委派独立子任务；可能增加 token 消耗。与思考等级无关，仅影响新任务。"><Users size={15} /><span>多 Agent {props.autonomousDelegation ? "开" : "关"}</span></button>
         <ChatModelSelector disabled={props.busy} />
         {props.busy ? <button type="button" className="compact-stop" onClick={props.stop} title="停止生成" aria-label="停止生成"><Square size={14} fill="currentColor" /></button> : canSend ? <button type="button" className="compact-send" onClick={props.send} disabled={props.disabled || Boolean(props.uploadingCount)} title="发送" aria-label="发送"><Send size={17} /></button> : null}
       </div>
@@ -300,6 +378,8 @@ export function ChatView(props: {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(initialPermissionMode);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(initialReasoningEffort);
+  const [autonomousDelegation, setAutonomousDelegation] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [approvalResponding, setApprovalResponding] = useState(false);
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
@@ -352,6 +432,8 @@ export function ChatView(props: {
         const run = { id: runId, prompt: payload.prompt, startedAt: payload.started_at ?? new Date().toISOString(), status, thinking: payload.thinking ?? "" } satisfies ActiveRun;
         setActiveRun(run);
         if (isPermissionMode(payload.permission_mode)) setPermissionMode(payload.permission_mode);
+        if (isReasoningEffort(payload.reasoning_effort)) setReasoningEffort(payload.reasoning_effort);
+        if (typeof payload.autonomous_delegation === "boolean") setAutonomousDelegation(payload.autonomous_delegation);
         ensureRunMessages(runId, payload.prompt, payload.content ?? "", payload.attachments ?? []);
         if (payload.artifacts?.length) updateAssistant(runId, (message) => ({ ...message, attachments: payload.artifacts }));
         onRunState?.(chatId, true, payload.prompt);
@@ -470,6 +552,10 @@ export function ChatView(props: {
   }, [permissionMode]);
 
   useEffect(() => {
+    try { window.localStorage.setItem(REASONING_STORAGE_KEY, reasoningEffort); } catch { /* local storage can be unavailable in hardened browsers */ }
+  }, [reasoningEffort]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeRun?.thinking]);
 
@@ -522,7 +608,7 @@ export function ChatView(props: {
     setNotice("");
     onStarted?.(chatId, content);
     onRunState?.(chatId, true, content);
-    socketRef.current.send(JSON.stringify({ type: "message", content, request_id: requestId, permission_mode: permissionMode, attachment_ids: attachments.map((attachment) => attachment.id) }));
+    socketRef.current.send(JSON.stringify({ type: "message", content, request_id: requestId, permission_mode: permissionMode, reasoning_effort: reasoningEffort, autonomous_delegation: autonomousDelegation, attachment_ids: attachments.map((attachment) => attachment.id) }));
     setAttachments([]);
   };
 
@@ -553,6 +639,10 @@ export function ChatView(props: {
     disabled: !connected,
     permissionMode,
     setPermissionMode,
+    reasoningEffort,
+    setReasoningEffort,
+    autonomousDelegation,
+    setAutonomousDelegation,
     attachments,
     uploadingCount,
     onChooseFiles: (files: FileList | File[]): void => { void uploadFiles(files); },

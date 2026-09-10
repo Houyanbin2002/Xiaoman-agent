@@ -227,6 +227,8 @@ class ExecutionMemoryRepository:
             state = self.get(item_id)
             if state is None:
                 raise ValueError(f"execution memory state does not exist: {item_id}")
+            if evidence_ref.strip() and evidence_ref.strip() in state.evidence_refs:
+                return state
             updated = apply_execution_outcome(
                 state,
                 success=success,

@@ -74,6 +74,8 @@ def _event() -> ConversationSemanticBatchCommitted:
                 "recent_activity_entries": [
                     {
                         "summary": "用户周五前交报告",
+                        "title": "提交报告",
+                        "status": "active",
                         "importance": 7,
                         "source_message_ids": ["web:1:0"],
                     }
@@ -83,6 +85,8 @@ def _event() -> ConversationSemanticBatchCommitted:
                         "tag": "preference",
                         "content": "用户偏好上午处理重要任务",
                         "confidence": 0.9,
+                        "origin": "explicit_user",
+                        "evidence_quote": "我偏好上午处理重要任务",
                         "subject": "用户",
                         "predicate": "偏好处理重要任务的时段",
                         "value": "上午",
@@ -133,6 +137,7 @@ async def test_memory_consumer_writes_history_candidates_and_context_once(
     consumer = ConversationMemoryBatchConsumer(
         markdown=markdown,
         candidate_sink=candidate_sink,
+        message_source=lambda _: [{"id": "web:1:0", "role": "user", "content": "我偏好上午处理重要任务"}],
     )
 
     await consumer.handle(_event())
@@ -151,7 +156,9 @@ async def test_memory_consumer_writes_history_candidates_and_context_once(
             "value": "上午",
             "scope": "工作日",
             "source_message_id": "web:1:0",
-            "_user_evidence_verified": True,
+            "_evidence_quote_verified": True,
+            "evidence_quote": "我偏好上午处理重要任务",
+            "evidence_context": "我偏好上午处理重要任务",
         }
     ]
     assert "用户周五前交报告" in markdown.read_recent_context()

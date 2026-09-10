@@ -54,6 +54,22 @@ class AgentRun:
     latency_ms: float | None = None
     trace_id: str = ""
 
+    @property
+    def objective_outcome(self) -> str:
+        """Explicit business outcome, separate from kernel termination."""
+        value = self.metadata.get(
+            "objective_outcome", self.state.get("objective_outcome", "unknown")
+        )
+        return str(value or "unknown")
+
+    @property
+    def delivery_status(self) -> str:
+        """Whether the requested artifact/message was actually delivered."""
+        value = self.metadata.get(
+            "delivery_status", self.state.get("delivery_status", "unknown")
+        )
+        return str(value or "unknown")
+
     @classmethod
     def from_value(cls, value: "AgentRun | Mapping[str, Any] | str") -> "AgentRun":
         if isinstance(value, cls):
@@ -72,7 +88,9 @@ class AgentRun:
             tools=normalized_tools,
             state=_as_dict(value.get("state")),
             memory_events=tuple(
-                dict(item) for item in (memory_events or ()) if isinstance(item, Mapping)
+                dict(item)
+                for item in (memory_events or ())
+                if isinstance(item, Mapping)
             ),
             metadata=_as_dict(value.get("metadata")),
             status=str(value.get("status", "completed")),
@@ -164,7 +182,11 @@ class EvalCase:
             input=str(value.get("input", value.get("request", ""))),
             expected=_as_dict(value.get("expected")),
             rubric=tuple(
-                item if isinstance(item, RubricCriterion) else RubricCriterion.from_dict(item)
+                (
+                    item
+                    if isinstance(item, RubricCriterion)
+                    else RubricCriterion.from_dict(item)
+                )
                 for item in (rubric or ())
                 if isinstance(item, (RubricCriterion, Mapping))
             ),
@@ -224,6 +246,7 @@ class CaseResult:
     scores: tuple[Score, ...]
     run: AgentRun
     error: str = ""
+    assessment: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -234,6 +257,7 @@ class CaseResult:
             "scores": [score.to_dict() for score in self.scores],
             "run": self.run.to_dict(),
             "error": self.error,
+            "assessment": dict(self.assessment),
         }
 
 
@@ -248,6 +272,7 @@ class EvalSummary:
     results: tuple[CaseResult, ...]
     metrics: dict[str, float] = field(default_factory=dict)
     slices: dict[str, dict[str, float]] = field(default_factory=dict)
+    manifest: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -260,4 +285,5 @@ class EvalSummary:
             "metrics": dict(self.metrics),
             "slices": {name: dict(values) for name, values in self.slices.items()},
             "results": [result.to_dict() for result in self.results],
+            "manifest": dict(self.manifest),
         }

@@ -5,6 +5,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from agent.tools.base import Tool
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 class PushDeliveryResult:
     success: bool
     message: str
+    sent_parts: tuple[str, ...] = ()
+    unknown_parts: tuple[str, ...] = ()
 
 
 class MessagePushTool(Tool):
@@ -94,7 +97,7 @@ class MessagePushTool(Tool):
             image=kwargs.get("image"),
             commit_role=str(kwargs.get("_commit_role") or "").strip(),
         )
-        return result.message
+        return result.message if result.success else f"工具执行出错: {result.message}"
 
     async def send(
         self,
@@ -105,6 +108,7 @@ class MessagePushTool(Tool):
         file: str | None = None,
         image: str | None = None,
         commit_role: str = "",
+        before_send: Callable[[], bool] | None = None,
     ) -> PushDeliveryResult:
         """Send content and return a typed result for deterministic callers."""
 
@@ -119,6 +123,8 @@ class MessagePushTool(Tool):
             )
 
         async def _send() -> PushDeliveryResult:
+            if before_send is not None and not before_send():
+                return PushDeliveryResult(False, "发送已取消：任务已取消或被新版本替换")
             return await self._send_now(
                 channel=channel,
                 chat_id=chat_id,
@@ -126,6 +132,7 @@ class MessagePushTool(Tool):
                 file=file,
                 image=image,
                 senders=senders,
+                before_send=before_send,
             )
 
         if self._chat_lane is not None and commit_role != "passive":
@@ -141,37 +148,69 @@ class MessagePushTool(Tool):
         file: str | None,
         image: str | None,
         senders: dict[str, Callable[..., Awaitable[None]]],
+        before_send: Callable[[], bool] | None = None,
     ) -> PushDeliveryResult:
 
         results: list[str] = []
         errors: list[str] = []
+        sent_parts: list[str] = []
+        current_part = ""
+        if message and not ({"text", "stream_text"} & senders.keys()):
+            errors.append(f"渠道 {channel!r} 不支持发送文本")
+        if file and "file" not in senders:
+            errors.append(f"渠道 {channel!r} 不支持发送文件")
+        if image and "image" not in senders:
+            errors.append(f"渠道 {channel!r} 不支持发送图片")
+        if errors:
+            return PushDeliveryResult(False, "；".join(errors))
+        if file and not Path(file).is_file():
+            return PushDeliveryResult(False, "文件不存在或不是普通文件")
+        if image and not image.startswith(("http://", "https://")) and not Path(image).is_file():
+            return PushDeliveryResult(False, "图片不存在或不是普通文件")
+
+        def check_current() -> None:
+            if before_send is not None and not before_send():
+                raise RuntimeError("任务已取消或被新版本替换，未发送后续部分")
+
         try:
             if message:
+                check_current()
                 sender_name = "stream_text" if "stream_text" in senders else "text"
                 if sender_name not in senders:
                     errors.append(f"渠道 {channel!r} 不支持发送文本")
                 else:
+                    current_part = "text"
                     await senders[sender_name](chat_id, message)
+                    sent_parts.append("text")
+                    current_part = ""
                     preview = message[:60] + "..." if len(message) > 60 else message
                     logger.info(f"[message_push] {channel}:{chat_id} ← text: {preview!r}")
                     results.append("文本已发送")
 
             if file:
+                check_current()
                 if "file" not in senders:
                     errors.append(f"渠道 {channel!r} 不支持发送文件")
                 else:
                     import os
 
                     name = os.path.basename(file)
+                    current_part = "file"
                     await senders["file"](chat_id, file, name)
+                    sent_parts.append("file")
+                    current_part = ""
                     logger.info(f"[message_push] {channel}:{chat_id} ← file: {file!r}")
                     results.append(f"文件 {name!r} 已发送")
 
             if image:
+                check_current()
                 if "image" not in senders:
                     errors.append(f"渠道 {channel!r} 不支持发送图片")
                 else:
+                    current_part = "image"
                     await senders["image"](chat_id, image)
+                    sent_parts.append("image")
+                    current_part = ""
                     logger.info(
                         f"[message_push] {channel}:{chat_id} ← image: {image!r}"
                     )
@@ -180,11 +219,11 @@ class MessagePushTool(Tool):
         except Exception as e:
             log = logger.info if "未连接" in str(e) else logger.error
             log(f"[message_push] 发送失败 {channel}:{chat_id}: {e}")
-            return PushDeliveryResult(False, f"发送失败：{e}")
+            return PushDeliveryResult(False, "；".join([*results, f"发送失败：{e}"]), tuple(sent_parts), (current_part,) if current_part else ())
 
         if errors:
             detail = "；".join([*results, *errors])
             return PushDeliveryResult(False, detail)
         if results:
-            return PushDeliveryResult(True, "；".join(results))
+            return PushDeliveryResult(True, "；".join(results), tuple(sent_parts))
         return PushDeliveryResult(False, f"渠道 {channel!r} 没有可用的 sender")

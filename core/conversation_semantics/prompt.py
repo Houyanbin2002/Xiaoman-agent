@@ -30,6 +30,7 @@ SEMANTIC_SYSTEM_PROMPT = """你是小满个人助手的后台语义分析器。�
 
 2. memory_candidates：稳定的用户长期个人上下文。字段：tag、content、confidence、origin、source_message_id、evidence_refs，可选 subject、predicate、value、scope、attributes、replaces、valid_from、expires_at。tag 只能是 identity、preference、relationship、long_term_health、project_context、correction。correction 必须明确指出 replaces；普通近期任务不属于长期记忆。
 - preference/correction 必须尽量输出 subject="用户"、predicate、value，并在 attributes.preference_key 给出稳定槽位名。常用槽位统一使用 code_language、timezone、response_style、response_length、document_format、notification_quiet_hours、communication_channel、active_project；其他偏好使用简短、稳定的英文 snake_case 槽位名。同一偏好的同义表达必须使用同一个 preference_key。
+- scope 只记录用户明确限定的场景或项目；未限定则输出空字符串，不猜测范围。槽位本身的含义不是额外范围（如 code_language 已表示代码语言，不再设 scope=代码示例）。工作场景统一 work、闲聊统一 casual；技术方案、具体项目等明确条件保留原文。相同消息、主体、槽位及适用条件只输出一个候选，不同时输出全局版和场景版。
 
 3. task_events：尚未由工具成功创建的待办、截止事项及其明确状态变化。字段：summary、operation、delivery_semantics、confidence、origin、source_message_id、evidence_refs，可选 due_at、active_from、expires_at、related_summary、related_event_id。operation 只能是 upsert、complete、cancel。exact 必须有用户明确给出的准确时间；before_deadline 必须有截止时间；complete/cancel 必须引用用户明确表达的状态变化。
 
@@ -45,16 +46,25 @@ SEMANTIC_SYSTEM_PROMPT = """你是小满个人助手的后台语义分析器。�
 - 操作步骤必须由证据支持；required_tools 只能来自 Episode 中真实出现的工具。
 - 用户纠正旧经验并给出替代规则时，输出一个精确 suspend/supersede 候选和一个新的 upsert 候选；禁止模糊匹配淘汰。
 
+补充约束（优先适用）：
+- recent_activity_entries 增加 title/status，status 为 planned/active/completed/cancelled/dismissed；更新 existing_activities 中的事项必须使用原 id→activity_id、revision→expected_revision，明确重新开始才设 reopen=true。expires_at 为有证据的时效，不凭空延长。已完成/取消的事项不是当前待办，旧活动列表不算新证据。
+- memory_candidates 必須包含 evidence_quote：从 source_message_id 的用户原文逐字摘录完整短句，保留否定、转述主体和适用条件。原文引用只证明来源，不授予用户确认或覆盖权限。用户纠错进入待确认，不声称已删除旧内容。
+- preference 只保存稳定、跨会话的习惯或有长期价值的信息；买礼物、临时任务、此条回复格式要求属于近期活动或当前指令，不固化为偏好。别人的偏好不能算用户偏好，转述、假设、歧义不作明确规定。不同 subject/scope 的偏好必须共存，工作简洁与闲聊详细不得互相替换。同句独立事实拆成原子候选。
+- Episode 预筛信号不是结论：无关工具 B 成功不能证明 A 修复。普通多步骤成功不自动记忆，临时网络异常不成为永久限制。running/pending/进程 ID 只说明受理，不是成功。抽取 outcome 是假设，不增加执行计数；强化只按实际采用后的对应工具终态。
+- suspend/supersede 只是建议，后台不直接淘汰旧执行经验；需显式管理确认，不宣称自动停用完成。
 模型只负责候选提取，不得自行决定 user_locked、最终生命周期、冲突淘汰或成功/失败计数，这些由各领域治理器根据证据决定。"""
 
 
 def build_semantic_batch_prompt(
     messages: Sequence[Mapping[str, object]],
+    *, existing_activities: list[dict[str, object]] | None = None,
 ) -> str:
     """Build only dynamic JSON so the stable system prompt can be cached."""
 
     evidence = build_semantic_evidence(messages)
-    return json.dumps(evidence.to_mapping(), ensure_ascii=False, separators=(",", ":"))
+    payload = evidence.to_mapping()
+    payload["existing_activities"] = list(existing_activities or [])[:30]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 __all__ = ["SEMANTIC_SYSTEM_PROMPT", "build_semantic_batch_prompt"]

@@ -87,7 +87,7 @@ class ExecutionMemoryRetriever:
             "## 【Agent 执行经验】",
             "以下内容是有适用范围的历史执行经验；环境或版本不一致时必须重新验证，不能当作用户事实。",
             "只有真正采用某条经验时，才在内部推理中写入 "
-            '<used-execution-memory id="对应ref"/>；不要在最终答复展示该标记。',
+            '<used-execution-memory id="对应ref" call_ids="实际调用ID,实际调用ID"/>；仅在工具结果返回后关联确实采用该经验的调用，不得虚构 ID；没有明确调用证据就不标记，不要在最终答复展示该标记。',
         ]
         injected: list[str] = []
         total = sum(len(line) for line in lines) + 2

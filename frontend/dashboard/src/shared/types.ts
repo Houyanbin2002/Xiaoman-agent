@@ -329,6 +329,20 @@ export interface ExecutionMemoryRow {
   };
 }
 
+export interface WorkflowNotification {
+  id: string;
+  workflow_id: string;
+  step_id: string;
+  status: string;
+  channel: string;
+  attempts: number;
+  error: string;
+  message: string;
+  next_attempt_at: number | null;
+  is_current: boolean;
+  version: number;
+}
+
 export interface MemoryConflictRow {
   id: string;
   record_key: string;

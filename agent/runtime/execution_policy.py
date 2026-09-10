@@ -15,6 +15,15 @@ from agent.tool_hooks.types import ToolSource
 from agent.tools.base import ToolResult
 
 
+class IncompleteExecutionError(RuntimeError):
+    """A progress summary is available, but execution did not complete normally."""
+
+    def __init__(self, reason: str, summary: str = "") -> None:
+        self.reason = reason
+        self.summary = summary
+        super().__init__(f"执行未完成（{reason}），请检查进度后继续或调整计划。{summary[:1000]}")
+
+
 _PASSIVE_SUMMARY_PROMPT = """当前任务需要先暂停继续调用工具，请直接输出给用户看的中文阶段性回复。
 必须基于已有上下文，不要编造结果。
 必须包含四点：

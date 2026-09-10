@@ -53,6 +53,20 @@ _EXECUTION_USE_MARKER_RE = re.compile(
 )
 
 
+def execution_memory_uses(thinking: str | None, retrieved_ids: object, tool_chain: object) -> dict[str, list[str]]:
+    """Only bind retrieved memories to unique observed tool calls."""
+    retrieved = set(map(str, retrieved_ids)) if isinstance(retrieved_ids, list) else set()
+    calls = [str(call.get("call_id") or "") for group in (tool_chain if isinstance(tool_chain, (list, tuple)) else []) if isinstance(group, Mapping) for call in (group.get("calls") or []) if isinstance(call, Mapping)]
+    valid = {value for value in calls if value and calls.count(value) == 1}
+    pattern = r'<used-execution-memory\s+id=["\']([^"\']+)["\']\s+call_ids=["\']([^"\']+)["\']\s*/>'
+    uses: dict[str, list[str]] = {}
+    for item_id, raw in re.findall(pattern, thinking or ""):
+        ids = list(dict.fromkeys(part.strip() for part in raw.split(",")))
+        if item_id in retrieved and ids and set(ids) <= valid:
+            uses[item_id] = list(dict.fromkeys(uses.get(item_id, []) + ids))
+    return {key: ids for key, ids in uses.items() if not any(set(ids) & set(other) for other_key, other in uses.items() if key != other_key)}
+
+
 def used_execution_memory_ids(
     thinking: str | None,
     retrieved_ids: object,

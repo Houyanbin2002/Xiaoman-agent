@@ -1,8 +1,9 @@
 import logging
-import re
 import sqlite3
 import threading
 from pathlib import Path
+from core.conversation_semantics.models import RecentActivityCandidate
+from infra.persistence.recent_activity_store import RecentActivityStore
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,20 @@ class MarkdownMemoryStore:
         self._consolidation_db = self.memory_dir / "consolidation_writes.db"
         self._consolidation_lock = threading.Lock()
         self._init_consolidation_db()
+        self._activities = RecentActivityStore(self._consolidation_db)
+
+    def apply_activity_updates(
+        self, entries: list[RecentActivityCandidate], *, batch_id: str, session_key: str
+    ) -> None:
+        self._activities.apply(entries, batch_id=batch_id, session_key=session_key)
+
+    def activity_snapshot(self) -> list[dict[str, object]]:
+        return self._activities.snapshot()
+
+    def activity_recall_states(
+        self, refs: list[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        return self._activities.recall_states(refs)
 
     def append_history_once(
         self,
@@ -73,9 +88,7 @@ class MarkdownMemoryStore:
     # ── RECENT_CONTEXT.md (compacted recent context) ──────────────
 
     def read_recent_context(self) -> str:
-        if self.recent_context_file.exists():
-            return self.recent_context_file.read_text(encoding="utf-8")
-        return ""
+        return self.build_recent_activity_context()
 
     def write_recent_context(self, content: str) -> None:
         self.recent_context_file.write_text(content, encoding="utf-8")
@@ -86,40 +99,7 @@ class MarkdownMemoryStore:
         max_entries: int = 18,
         max_chars: int = 4500,
     ) -> str:
-        """Render a bounded, deduplicated cross-session activity digest.
-
-        HISTORY remains the append-only audit log. RECENT_CONTEXT is only an
-        awareness view and must never be treated as a source of stable user
-        preferences or execution rules.
-        """
-
-        lines = [
-            line.strip()
-            for line in self.read_history().splitlines()
-            if line.strip().startswith("- ")
-        ]
-        selected: list[str] = []
-        seen: set[str] = set()
-        used = 0
-        for line in reversed(lines):
-            normalized = re.sub(r"^[-\s]*(?:\[[^]]+\]\s*)+", "", line).strip().lower()
-            if not normalized or normalized in seen:
-                continue
-            if used + len(line) > max(500, int(max_chars)):
-                continue
-            seen.add(normalized)
-            selected.append(line)
-            used += len(line)
-            if len(selected) >= max(1, int(max_entries)):
-                break
-        if not selected:
-            return ""
-        selected.reverse()
-        return (
-            "# 近期活动摘要\n\n"
-            "> 这是跨会话的近期动态，只用于了解用户最近在忙什么；"
-            "不得据此推断长期偏好或覆盖用户当前指令。\n\n" + "\n".join(selected) + "\n"
-        )
+        return self._activities.render(max_entries=max_entries, max_chars=max_chars)
 
     # ── SELF.md (Xiaoman self-model) ──────────────────────────────
 

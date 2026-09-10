@@ -5,6 +5,12 @@ from typing import Any
 
 from agent.tools.base import Tool
 from agent.workflows.runtime import WorkflowRuntime
+from agent.runtime.reasoning_policy import WORKFLOW_REASONING_CONTEXT_KEY
+from agent.runtime.delegation import (
+    CONTEXT_KEY,
+    DelegationBudgetExceeded,
+    current_scope,
+)
 from core.workflow.models import StepExecutor, StepKind, StepSpec
 
 
@@ -20,7 +26,7 @@ class TaskCreateTool(Tool):
         "任务应留在 AgentLoop，不要为了任务较长而强制创建 Workflow。"
         "创建时只定义少量粗粒度阶段，不要把每次工具调用展开成完整 DAG；"
         "中间证据变化后通过 task_manage.replan 替换尚未执行的阶段。"
-        "独立调研、分析、写报告等步骤使用 executor=subagent；"
+        "只有运行时允许自主多 Agent 时，才将独立且有实质收益的工作交给 executor=subagent；"
         "需要当前会话完整能力或外部操作的步骤使用 executor=agent。"
         "agent 步骤默认只能调用只读工具；需要写入或外部副作用工具时，"
         "必须在 allowed_tools 中逐项声明，并直接依赖一个 approval 步骤。"
@@ -132,6 +138,25 @@ class TaskCreateTool(Tool):
             channel = str(kwargs.get("channel") or "").strip()
             chat_id = str(kwargs.get("chat_id") or "").strip()
             session_key = f"{channel}:{chat_id}" if channel and chat_id else ""
+            context = dict(kwargs.get("context") or {})
+            # Never accept the reserved runtime key from model-authored JSON.
+            context.pop(WORKFLOW_REASONING_CONTEXT_KEY, None)
+            context.pop(CONTEXT_KEY, None)
+            scope = current_scope.get()
+            if scope is not None:
+                if scope.child:
+                    return "错误：子执行器不可递归创建 Workflow。请把后续建议返回主 Agent。"
+                if any(step.kind == StepKind.AGENT for step in steps):
+                    scope.ledger.reserve(scope.key, 0, child=True)
+                context[CONTEXT_KEY] = scope.metadata()
+            # Registry injects this value from the immutable turn decision.
+            # Keep it in durable context so retries/restarts inherit it, while
+            # using a reserved key that cannot be confused with user context.
+            reasoning_effort = (
+                str(kwargs.get("current_reasoning_effort") or "").strip().lower()
+            )
+            if reasoning_effort:
+                context[WORKFLOW_REASONING_CONTEXT_KEY] = reasoning_effort
             workflow = self.runtime.create_workflow(
                 name=str(kwargs.get("name") or ""),
                 goal=str(kwargs.get("goal") or ""),
@@ -139,10 +164,10 @@ class TaskCreateTool(Tool):
                 session_key=session_key,
                 channel=channel,
                 chat_id=chat_id,
-                context=dict(kwargs.get("context") or {}),
+                context=context,
                 auto_start=bool(kwargs.get("auto_start", True)),
             )
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, DelegationBudgetExceeded) as exc:
             return f"错误：{exc}"
         self.runtime.wake()
         return _json_text(

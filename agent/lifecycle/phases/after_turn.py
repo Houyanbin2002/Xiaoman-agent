@@ -23,7 +23,7 @@ from agent.turns.outbound import OutboundDispatch, OutboundPort
 from bus.event_bus import EventBus
 from bus.events import OutboundMessage
 from bus.events_lifecycle import TurnCommitted
-from core.memory.execution import used_execution_memory_ids
+from core.memory.execution import execution_memory_uses
 
 if TYPE_CHECKING:
     from agent.context import ContextBuilder
@@ -93,12 +93,16 @@ class _BuildTurnWorkModule:
         memory_retrieval = state.extra_metadata.get("memory_retrieval")
         if isinstance(memory_retrieval, dict):
             retrieval = dict(memory_retrieval)
-            used_ids = used_execution_memory_ids(
+            uses = execution_memory_uses(
                 snap.ctx.thinking,
                 retrieval.get("execution_memory_ids"),
+                snap.ctx.tool_chain,
             )
-            if used_ids:
-                retrieval["used_execution_memory_ids"] = used_ids
+            retrieval.pop("used_execution_memory_ids", None)
+            retrieval.pop("execution_memory_uses", None)
+            if uses:
+                retrieval["used_execution_memory_ids"] = list(uses)
+                retrieval["execution_memory_uses"] = uses
             extra["memory_retrieval"] = retrieval
         frame.slots[_EXTRA_SLOT] = extra
         frame.slots[_TOOL_CHAIN_SLOT] = list(snap.ctx.tool_chain)

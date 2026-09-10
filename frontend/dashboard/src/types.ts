@@ -79,6 +79,7 @@ export interface ProactiveTick {
   finished_at?: string | null;
   gate_exit?: string | null;
   terminal_action?: string | null;
+  delivery_status?: "accepted" | "unconfirmed" | "not_requested" | "unknown";
   skip_reason?: string | null;
   steps_taken?: number;
   drift_entered?: boolean | number;

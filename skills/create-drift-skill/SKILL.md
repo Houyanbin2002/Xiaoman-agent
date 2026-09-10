@@ -59,7 +59,7 @@ drift run
 - 如果只是当前 skill 的进展变化，优先通过 `finish_drift` 的 `scratchpad_update`、`cursor_update` 或 `journal_append` 保存连续性，不要修改 skill 文件
 - 如果需要确定性处理、抽样、生成文件或读取 cursor/journal，再放一个最小脚本到 `scripts/`
 - 结束流程必须写清 `finish_drift.status`：完成写 `completed`，未完成写 `paused`，等待条件写 `waiting`
-- 结束流程必须写清 `finish_drift.message_result`：已成功推送写 `sent`，静默结束写 `silent`
+- `message_push` 只暂存通知候选，不直接发送；结束流程的 `finish_drift.message_result` 写 `proposed` 或 `silent`。免打扰、去重、投递和回执记录由统一主动链路负责，不能把候选写成已发送事实。
 - `paused` / `waiting` 必须写 `scratchpad_update`，说明下次从哪里继续或等待什么
 - 需要脚本连续执行时，必须写清脚本如何从 `cursor_update` 产生的 cursor 里读下一步
 - 已完成事实必须通过 `journal_append` 记录，避免下轮重复处理同一对象

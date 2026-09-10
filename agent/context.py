@@ -219,7 +219,10 @@ class MessageEnvelopeBuilder:
         if stripped.startswith("[当前消息时间:"):
             return text
         stamp = build_current_message_time_envelope(message_timestamp=message_timestamp)
-        return f"{stamp}\n{text}"
+        # Keep the user turn unmistakable after the context frame (which uses
+        # a user-role envelope for provider compatibility). This prevents the
+        # model from treating a real request as another system reminder.
+        return f"{stamp}\n[用户本轮真实消息]\n{text}"
 
     def _resolve_policy(self, channel: str) -> ChannelPolicy | None:
         policy = self._policies.get(channel)

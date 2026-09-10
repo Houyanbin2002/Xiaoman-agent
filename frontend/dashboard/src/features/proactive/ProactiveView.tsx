@@ -281,7 +281,7 @@ export function ProactiveView(): React.ReactElement {
         <div><h3>等待唤醒</h3>{wakes.data?.length ? wakes.data.slice(0, 10).map((wake) => <p key={wake.id}><CalendarClock size={13} /><span>{wake.entity?.title || wake.event?.kind || "待判断事项"}</span><small>{shortTs(wake.wake_at)} · {wake.reason}</small></p>) : <small>当前无需定时唤醒</small>}</div>
         <div><h3>暂停的规律</h3>{suspendedPatterns.length ? suspendedPatterns.map((pattern) => <p key={pattern.id}><Pause size={13} /><span>{pattern.scene}</span><button disabled={busy === pattern.id} onClick={() => void setPatternStatus(pattern, "active")}><Play size={12} />恢复</button></p>) : <small>没有暂停的规律</small>}</div>
       </div>
-      <div className="proactive-runtime-log"><h3>最近运行记录</h3>{ticks.data?.items.slice(0, 12).map((tick) => <p key={tick.tick_id}><span>{shortTs(tick.started_at)}</span><Badge tone={tick.terminal_action === "reply" ? "green" : "gray"}>{tick.terminal_action === "reply" ? "已联系" : "保持安静"}</Badge><small>{stripMarkdown(tick.final_message || tick.skip_reason || "无摘要")}</small></p>)}</div>
+      <div className="proactive-runtime-log"><h3>最近运行记录</h3>{ticks.data?.items.slice(0, 12).map((tick) => <p key={tick.tick_id}><span>{shortTs(tick.started_at)}</span><Badge tone={tick.delivery_status === "accepted" ? "green" : "gray"}>{tick.delivery_status === "accepted" ? "渠道已接收" : tick.terminal_action === "reply" ? "未确认送达" : "保持安静"}</Badge><small>{stripMarkdown(tick.final_message || tick.skip_reason || "无摘要")}</small></p>)}</div>
     </details>
 
     {runtimeEditor ? <Modal title="小满怎样主动联系你" description="选择小满主动找你时使用的渠道和账号。" onClose={() => setRuntimeEditor(null)}><div className="form-stack">

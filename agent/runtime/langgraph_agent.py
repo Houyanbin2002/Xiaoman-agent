@@ -25,7 +25,11 @@ from agent.runtime.langchain_adapters import (
     registry_tools_as_langchain,
 )
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.reasoning_policy import ReasoningPolicy
+from agent.runtime.delegation import DelegationScope, current_scope, new_scope
 from agent.runtime.execution_guard import bound_tool_result
+from agent.runtime.checkpoint_resume import reconcile_checkpoint
+from agent.tools.shell import cancel_owned_processes, shell_execution_owner
 from agent.tool_hooks import ToolExecutionRequest
 from agent.tool_runtime import (
     append_assistant_tool_calls,
@@ -122,6 +126,9 @@ class AgentGraphState(TypedDict):
     model_retry_pending: NotRequired[bool]
     protocol_retry_count: NotRequired[int]
     incomplete_reply_retry_count: NotRequired[int]
+    reasoning_policy: NotRequired[dict[str, Any]]
+    reasoning_extra_body: NotRequired[dict[str, Any]]
+    delegation: NotRequired[dict[str, Any]]
 
 
 def _tool_call_from_dict(raw: dict[str, Any]) -> LLMToolCall:
@@ -222,7 +229,14 @@ class LangGraphAgentExecutor:
         request_text: str,
         permission_mode: str,
         disabled_tools: set[str] | None,
+        reasoning_effort: str = "",
     ) -> AgentGraphState:
+        decision = ReasoningPolicy(self._host._llm_config.reasoning).decide(
+            reasoning_effort,
+            source=self._host._execution_policy.source,
+            session_key=session_key,
+            model=self._host._llm_config.model,
+        )
         disabled = set(disabled_tools or ())
         visible_names: list[str] | None = None
         visible_order: list[str] | None = None
@@ -266,6 +280,10 @@ class LangGraphAgentExecutor:
             chat_id=chat_id,
             request_text=request_text,
             permission_mode=permission_mode,
+            reasoning_policy=decision.to_metadata(),
+            reasoning_extra_body=decision.request_extra_body(
+                self._host._llm_config.model
+            ),
             pending_tool_calls=[],
             pending_tool_index=0,
             pending_tool_results=[],
@@ -301,6 +319,8 @@ class LangGraphAgentExecutor:
         permission_mode: str = "full_access",
         disabled_tools: set[str] | None = None,
         resume_from_checkpoint: bool = False,
+        reasoning_effort: str = "",
+        autonomous_delegation: bool | None = None,
     ) -> ReasonerResult:
         graph = await self._compiled_graph()
         run_id = uuid.uuid4().hex
@@ -312,21 +332,81 @@ class LangGraphAgentExecutor:
             "configurable": {"thread_id": f"agent:{thread_key}"},
             "recursion_limit": max(100, self._host._llm_config.max_iterations * 4 + 20),
         }
+        scope_token = None
+        shell_owner_token = shell_execution_owner.set(run_id)
         try:
             graph_input: AgentGraphState | None
             snapshot = await graph.aget_state(config)
+            scope = current_scope.get()
+            if scope is None:
+                saved = snapshot.values.get("delegation", {}) if snapshot.next else {}
+                guard_config = self._host._execution_guard.config
+                allowed = (
+                    guard_config.autonomous_delegation
+                    if autonomous_delegation is None
+                    else autonomous_delegation
+                )
+                scope = new_scope(
+                    self._runtime.delegation_ledger,
+                    guard_config,
+                    allowed=bool(
+                        saved.get("allowed", allowed)
+                        if autonomous_delegation is None else allowed
+                    ),
+                    key=str(saved.get("budget_id") or ""),
+                )
+                if self._host._execution_policy.source == "subagent":
+                    scope = DelegationScope(scope.ledger, scope.key, False, True)
+            scope_token = current_scope.set(scope)
             # A pending checkpoint also survives a process restart, where the
             # old in-memory interrupt marker no longer exists. Resume it by
             # default; an explicit new-thread action should use a new session id.
             if snapshot.next:
                 graph_input = None
+                reasoning_patch: dict[str, Any] = {}
+                if reasoning_effort or not snapshot.values.get("reasoning_policy"):
+                    decision = ReasoningPolicy(self._host._llm_config.reasoning).decide(
+                        reasoning_effort,
+                        source=self._host._execution_policy.source,
+                        session_key=thread_key,
+                        model=self._host._llm_config.model,
+                    )
+                    reasoning_patch = {
+                        "reasoning_policy": {
+                            **decision.to_metadata(),
+                            "reason": "checkpoint_current_policy",
+                        },
+                        "reasoning_extra_body": decision.request_extra_body(
+                            self._host._llm_config.model
+                        ),
+                    }
                 await graph.aupdate_state(
                     config,
                     {
+                        **reconcile_checkpoint(
+                            snapshot.values, initial_messages,
+                            request_text=request_text,
+                            channel=tool_event_channel,
+                            chat_id=tool_event_chat_id,
+                            permission_mode=permission_mode,
+                            delegation_allowed=scope.allowed and not scope.child,
+                        ),
+                        **reasoning_patch,
+                        "session_key": tool_event_session_key,
+                        "channel": tool_event_channel,
+                        "chat_id": tool_event_chat_id,
+                        "request_text": request_text,
+                        "permission_mode": permission_mode,
+                        "disabled_tools": sorted(
+                            set(snapshot.values.get("disabled_tools") or [])
+                            | set(disabled_tools or [])
+                        ),
+                        "delegation": scope.metadata(),
                         "guard_state": self._host._execution_guard.resume_state(
                             snapshot.values.get("guard_state")
-                        )
+                        ),
                     },
+                    as_node="tool",
                 )
                 persisted_run_id = str(snapshot.values.get("run_id") or "")
                 if on_content_delta is not None and persisted_run_id:
@@ -351,14 +431,42 @@ class LangGraphAgentExecutor:
                     request_text=request_text,
                     permission_mode=permission_mode,
                     disabled_tools=disabled_tools,
+                    reasoning_effort=reasoning_effort,
                 )
+                graph_input["delegation"] = scope.metadata()
+                graph_input["messages"] = [
+                    *graph_input["messages"],
+                    {
+                        "role": "user",
+                        "content": (
+                            "[运行时委派策略] "
+                            + (
+                                "允许自主多 Agent；仅委派独立且有实质并行收益的工作，避免重复检索和重复产出。"
+                                if scope.allowed and not scope.child
+                                else "自主多 Agent 已关闭。优先在当前 AgentLoop 完成任务；不要用多个 agent 步骤绕过开关。确需委派时说明原因，请用户开启聊天框的多 Agent 开关。"
+                            )
+                            + "思考等级不代表委派授权。Workflow 只用于跨时间等待、审批或明确的持久化阶段，不因耗时长而创建。"
+                        ),
+                    },
+                ]
+                # Preserve the user's request as the last message. Inserting a
+                # runtime hint after it can make both models and integrations
+                # treat the hint itself as the question.
+                if (
+                    len(graph_input["messages"]) > 1
+                    and graph_input["messages"][-2].get("role") == "user"
+                ):
+                    graph_input["messages"][-2], graph_input["messages"][-1] = (
+                        graph_input["messages"][-1],
+                        graph_input["messages"][-2],
+                    )
             state = cast(
                 AgentGraphState,
                 await graph.ainvoke(graph_input, config, durability="sync"),
             )
             visible_raw = state.get("visible_names")
             visible_names = set(visible_raw) if visible_raw is not None else None
-            return self._host._build_result(
+            result = self._host._build_result(
                 reply=state.get("reply") or "（无响应）",
                 tools_used=list(state.get("tools_used") or []),
                 tool_chain=list(state.get("tool_chain") or []),
@@ -374,7 +482,21 @@ class LangGraphAgentExecutor:
                 exit_reason=state.get("exit_reason") or "completed",
                 execution_guard_state=dict(state.get("guard_state") or {}),
             )
+            result.metadata["reasoning_policy"] = dict(
+                state.get("reasoning_policy") or {}
+            )
+            result.metadata["delegation"] = {
+                **scope.metadata(),
+                "used_tokens": scope.ledger.used(scope.key),
+            }
+            return result
+        except BaseException:
+            await cancel_owned_processes(run_id)
+            raise
         finally:
+            shell_execution_owner.reset(shell_owner_token)
+            if scope_token is not None:
+                current_scope.reset(scope_token)
             for key in callback_keys:
                 self._stream_callbacks.pop(key, None)
 
@@ -450,6 +572,10 @@ class LangGraphAgentExecutor:
             provider=self._host._llm.provider,
             model_name=self._host._llm_config.model,
             max_output_tokens=self._host._llm_config.max_tokens,
+            extra_body=dict(state.get("reasoning_extra_body") or {}),
+            disable_thinking=not bool(
+                state.get("reasoning_policy", {}).get("enabled", True)
+            ),
             source=self._host._execution_policy.source,
             iteration=iteration + 1,
             on_content_delta=callback,
@@ -618,6 +744,10 @@ class LangGraphAgentExecutor:
                 source=self._host._execution_policy.source,
                 iteration=iteration + 2,
                 purpose="empty_reply_retry",
+                extra_body=dict(state.get("reasoning_extra_body") or {}),
+                disable_thinking=not bool(
+                    state.get("reasoning_policy", {}).get("enabled", True)
+                ),
                 on_content_delta=callback,
                 cache_metadata=retry_cache_view.plan.to_metadata(),
             )
@@ -841,6 +971,12 @@ class LangGraphAgentExecutor:
             }
 
         async def _execute_tool(name: str, arguments: dict[str, Any]) -> Any:
+            # Tool-side task creation may persist the same explicit reasoning
+            # choice for all durable child steps.  This is trusted runtime
+            # context; a model-supplied argument cannot override it.
+            policy = state.get("reasoning_policy") or {}
+            requested = str(policy.get("requested_effort") or "").strip()
+            self._host._tools.set_context(current_reasoning_effort=requested)
             if name == "tool_search" and visible_names is not None:
                 arguments = {**arguments, "excluded_names": visible_names | disabled}
             if name == "message_push":
@@ -1054,6 +1190,10 @@ class LangGraphAgentExecutor:
             reason=reason,
             iteration=state["iteration"],
             tools_used=list(state["tools_used"]),
+            reasoning_extra_body=dict(state.get("reasoning_extra_body") or {}),
+            disable_thinking=not bool(
+                state.get("reasoning_policy", {}).get("enabled", True)
+            ),
         )
         reply = state.get("early_stop_reply") or summary.text
         exit_reason = reason

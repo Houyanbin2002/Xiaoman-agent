@@ -73,6 +73,7 @@ class TaskExecutorToolsetProvider(ToolsetProvider):
             fetch_requester=http_resources.external_default,
             multimodal=config.multimodal,
             execution_guard=config.execution_guard,
+            reasoning=config.reasoning,
         )
         return build_registration_result(
             registry=registry,

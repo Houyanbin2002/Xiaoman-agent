@@ -18,8 +18,7 @@ class EvalResultStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(str(self.db_path))
         self._db.row_factory = sqlite3.Row
-        self._db.executescript(
-            """
+        self._db.executescript("""
             CREATE TABLE IF NOT EXISTS eval_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dataset TEXT NOT NULL,
@@ -39,6 +38,11 @@ class EvalResultStore:
                 payload_json TEXT NOT NULL,
                 PRIMARY KEY(run_id, case_id)
             );
+            CREATE TABLE IF NOT EXISTS eval_run_details (
+                run_id INTEGER PRIMARY KEY REFERENCES eval_runs(id),
+                manifest_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS eval_scores (
                 run_id INTEGER NOT NULL,
                 case_id TEXT NOT NULL,
@@ -50,8 +54,7 @@ class EvalResultStore:
                 reason TEXT NOT NULL,
                 FOREIGN KEY(run_id, case_id) REFERENCES eval_case_results(run_id, case_id) ON DELETE CASCADE
             );
-            """
-        )
+            """)
         self._db.commit()
 
     def close(self) -> None:
@@ -60,25 +63,58 @@ class EvalResultStore:
     def save(self, summary: EvalSummary) -> int:
         cursor = self._db.execute(
             "INSERT INTO eval_runs(dataset,version,total,passed,pass_rate,mean_reward) VALUES (?,?,?,?,?,?)",
-            (summary.dataset, summary.version, summary.total, summary.passed, summary.pass_rate, summary.mean_reward),
+            (
+                summary.dataset,
+                summary.version,
+                summary.total,
+                summary.passed,
+                summary.pass_rate,
+                summary.mean_reward,
+            ),
         )
         run_id = int(cursor.lastrowid)
+        self._db.execute(
+            "INSERT INTO eval_run_details VALUES (?,?,?)",
+            (
+                run_id,
+                json.dumps(summary.manifest, ensure_ascii=False),
+                json.dumps(summary.metrics),
+            ),
+        )
         for result in summary.results:
             self._db.execute(
                 "INSERT INTO eval_case_results(run_id,case_id,passed,reward,trace_id,payload_json) VALUES (?,?,?,?,?,?)",
-                (run_id, result.case_id, int(result.passed), result.reward, result.run.trace_id, json.dumps(result.to_dict(), ensure_ascii=False, default=str)),
+                (
+                    run_id,
+                    result.case_id,
+                    int(result.passed),
+                    result.reward,
+                    result.run.trace_id,
+                    json.dumps(result.to_dict(), ensure_ascii=False, default=str),
+                ),
             )
             for score in result.scores:
                 self._db.execute(
                     "INSERT INTO eval_scores(run_id,case_id,name,value,passed,hard,source,reason) VALUES (?,?,?,?,?,?,?,?)",
-                    (run_id, result.case_id, score.name, score.value, int(score.passed), int(score.hard), score.source, score.reason),
+                    (
+                        run_id,
+                        result.case_id,
+                        score.name,
+                        score.value,
+                        int(score.passed),
+                        int(score.hard),
+                        score.source,
+                        score.reason,
+                    ),
                 )
         self._db.commit()
         return run_id
 
-    def low_reward_cases(self, *, limit: int = 50, threshold: float = 0.6) -> list[dict[str, Any]]:
+    def low_reward_cases(
+        self, *, limit: int = 50, threshold: float = 0.6
+    ) -> list[dict[str, Any]]:
         rows = self._db.execute(
-            "SELECT run_id,case_id,reward,trace_id,payload_json FROM eval_case_results WHERE reward < ? ORDER BY run_id DESC LIMIT ?",
+            "SELECT run_id,case_id,reward,trace_id,payload_json FROM eval_case_results WHERE reward < ? OR passed=0 OR json_extract(payload_json,'$.assessment.accepted')=0 ORDER BY run_id DESC LIMIT ?",
             (float(threshold), max(1, min(int(limit), 500))),
         ).fetchall()
         return [

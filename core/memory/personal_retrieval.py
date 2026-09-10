@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.personal.memory_scope import render_memory_content, memory_scope
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -67,10 +68,14 @@ class GovernedPersonalMemoryRetriever:
         current = _aware(now or datetime.now(timezone.utc))
         query_terms = _terms(query)
         wanted_tags = {item.casefold() for item in (context_tags or set())}
+        wanted_scopes = {memory_scope(item[6:]) for item in wanted_tags if item.startswith("scope:")}
         semantic = semantic_scores or {}
         hits: list[PersonalMemoryHit] = []
         for record in records:
             if not _recallable(record, current):
+                continue
+            scope = memory_scope(record.data.get("scope"))
+            if wanted_scopes and scope and scope not in wanted_scopes:
                 continue
             text = _content(record)
             keyword_score = _keyword_score(query_terms, _terms(text))
@@ -94,6 +99,8 @@ class GovernedPersonalMemoryRetriever:
                 use_success=use_success,
             )
             score = _rank(record, signals, current)
+            if scope and scope in wanted_scopes:
+                score = min(1.0, score + 0.12)
             if score <= 0.0 or (
                 signals.semantic <= 0.0
                 and signals.keyword <= 0.0
@@ -191,7 +198,7 @@ def _kind(record: PersonalRecord) -> MemoryKind | None:
 
 
 def _content(record: PersonalRecord) -> str:
-    return str(record.data.get("content") or record.summary or record.title)
+    return render_memory_content(record.data, record.summary or record.title)
 
 
 def _parse_datetime(raw: str | None) -> datetime | None:

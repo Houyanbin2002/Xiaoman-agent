@@ -40,6 +40,7 @@ from agent.runtime.execution_guard import (
 )
 from agent.tools.base import ToolResult
 from proactive_v2.context import AgentTickContext
+from proactive_v2.tools import commit_notification_draft
 from proactive_v2.drift_state import DriftStateStore, SkillMeta
 from proactive_v2.drift_tools import (
     DriftToolDeps,
@@ -54,7 +55,7 @@ StepRecorder = Callable[[AgentTickContext, str, str, str, dict[str, Any], str], 
 logger = logging.getLogger(__name__)
 _WRAP_UP_MAX_ATTEMPTS = 2
 _BEFORE_SELECT_TOOLS = frozenset({"select_skill", "idle_drift"})
-_AFTER_SEND_TOOLS = frozenset({"finish_drift"})
+_AFTER_PROPOSAL_TOOLS = frozenset({"finish_drift"})
 _TOOL_CONSTRAINT_RETRY_LIMIT = 2
 
 
@@ -162,7 +163,6 @@ class DriftTurnPipeline:
         # 2.1 设置 ctx 标志位。
         ctx.drift_entered = True
         ctx.drift_finished = False
-        ctx.drift_message_sent = False
         ctx.drift_selected_skill = ""
 
         # 2.2 构建 drift tool registry。
@@ -224,8 +224,8 @@ class DriftTurnPipeline:
                 logger.info(
                     "[drift] selected_skill missing, forcing select_skill or idle_drift"
                 )
-            elif ctx.drift_message_sent:
-                allowed_tool_names = set(_AFTER_SEND_TOOLS)
+            elif ctx.has_notification_draft:
+                allowed_tool_names = set(_AFTER_PROPOSAL_TOOLS)
                 schemas = [
                     s for s in schemas if s["function"]["name"] in allowed_tool_names
                 ]
@@ -580,7 +580,7 @@ class DriftTurnPipeline:
 
     def _fallback_pause(self, ctx: AgentTickContext) -> None:
         skill_name = str(ctx.drift_selected_skill or "").strip() or "unknown"
-        message_result = "sent" if ctx.drift_message_sent else "silent"
+        message_result = "proposed" if ctx.has_notification_draft else "silent"
         self._store.save_finish(
             skill_used=skill_name,
             status="paused",
@@ -595,11 +595,21 @@ class DriftTurnPipeline:
     # ── 4. Finish ──────────────────────────────────────────────────────
 
     def _finish(self, ctx: AgentTickContext) -> None:
-        """记录 drift 退出状态。"""
+        """Commit a candidate to the existing proactive resolver, never send here."""
+        proposed = ctx.has_notification_draft
+        if ctx.drift_finished and proposed:
+            commit_notification_draft(ctx)
+        else:
+            # An interrupted exploration must not leak a half-finished draft.
+            ctx.draft_message = ""
+            ctx.draft_media = []
+            ctx.draft_evidence = []
+            ctx.terminal_action = "skip"
+            ctx.skip_reason = "no_content"
         logger.info(
-            "[drift] exit: finished=%s message_sent=%s selected_skill=%s",
+            "[drift] exit: finished=%s notification_proposed=%s selected_skill=%s",
             ctx.drift_finished,
-            ctx.drift_message_sent,
+            proposed,
             ctx.drift_selected_skill,
         )
 
@@ -782,10 +792,11 @@ class DriftTurnPipeline:
             "否则调用 select_skill(skill_name)。select_skill 会记录本轮 selected_skill，并返回该 skill 的 SKILL.md。\n"
             "2. 选中 skill 后执行一个原子动作；需要更多上下文时，只读取 SKILL.md 声明的 working files。"
             "路径由 drift mount resolver 解析，skills/<skill_name>/... 同时适用于工作区和内建 skill。\n"
-            "3. 有用户价值且适合打扰时可调用 message_push，单次 run 最多一次；"
-            "message_push 成功后只能调用 finish_drift。\n"
+            "3. 有用户价值时可调用 message_push 暂存通知候选，单次 run 最多一次；"
+            "这不是发送成功。随后只能调用 finish_drift，交由统一主动链路判断是否打扰和投递。\n"
             "4. 结束前必须调用 finish_drift；skill_used 必须等于 selected_skill，"
-            "message_result 必须如实标注 sent 或 silent。\n"
+            "message_result 必须标注 proposed（已暂存候选）或 silent（无候选）；不得宣称已联系用户。\n"
+            "proposed 不代表用户已收到通知；不要因此把 journal/cursor 写成已通知、已提问或等待用户回复。\n"
             "5. finish_drift.status 为 completed、paused 或 waiting。"
             "completed 表示小闭环已完成；paused 或 waiting 必须写 scratchpad_update。"
             "结构化接续写 cursor_update；已经完成的事实追加到 journal_append。\n\n"

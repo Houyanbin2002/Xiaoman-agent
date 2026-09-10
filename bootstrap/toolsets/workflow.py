@@ -24,9 +24,7 @@ class WorkflowToolsetProvider(ToolsetProvider):
             )
         config = getattr(deps, "config", None)
         guard = (
-            config.execution_guard
-            if config is not None
-            else ExecutionGuardConfig()
+            config.execution_guard if config is not None else ExecutionGuardConfig()
         ).normalized()
         runtime = WorkflowRuntime(
             store=WorkflowStore(deps.workspace / "langgraph-workflow-index.db"),
@@ -39,6 +37,7 @@ class WorkflowToolsetProvider(ToolsetProvider):
             max_concurrency=guard.workflow_max_concurrency,
             step_timeout_seconds=guard.workflow_step_timeout_seconds,
             max_subagent_steps=guard.workflow_max_subagent_steps,
+            delegation_guard=guard,
         )
         registry.register(
             TaskCreateTool(runtime),

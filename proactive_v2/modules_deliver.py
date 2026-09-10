@@ -26,13 +26,20 @@ class ProactiveDeliverer:
         ctx: AgentTickContext,
         decision: ResolveResult,
     ) -> float | None:
-        self._record_finish_fn(ctx, result=decision.result)
         if self._turn_orchestrator is None:
             raise RuntimeError("proactive turn_orchestrator is required")
-        await self._turn_orchestrator.handle_proactive_turn(
-            result=decision.result,
-            session_key=self._session_key,
-            channel=str(self._cfg.default_channel or "").strip(),
-            chat_id=str(self._cfg.default_chat_id or "").strip(),
+        ctx.delivery_status = (
+            "unconfirmed" if decision.action == "send" else "not_requested"
         )
+        try:
+            accepted = await self._turn_orchestrator.handle_proactive_turn(
+                result=decision.result,
+                session_key=self._session_key,
+                channel=str(self._cfg.default_channel or "").strip(),
+                chat_id=str(self._cfg.default_chat_id or "").strip(),
+            )
+            if accepted:
+                ctx.delivery_status = "accepted"
+        finally:
+            self._record_finish_fn(ctx, result=decision.result)
         return 0.0

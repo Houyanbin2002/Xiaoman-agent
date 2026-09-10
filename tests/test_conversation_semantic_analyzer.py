@@ -151,7 +151,9 @@ async def test_analyzer_preserves_explicit_directives_when_model_omits_them() ->
 
 
 @pytest.mark.asyncio
-async def test_analyzer_extracts_explicit_correction_with_replacement_evidence() -> None:
+async def test_analyzer_extracts_explicit_correction_with_replacement_evidence() -> (
+    None
+):
     provider = _Provider(
         {
             "memory_candidates": [
@@ -228,7 +230,7 @@ async def test_explicit_fallback_replaces_same_slot_model_candidate() -> None:
 def test_semantic_prompt_uses_generic_memory_and_execution_boundaries() -> None:
     prompt = build_semantic_batch_prompt(MESSAGES)
 
-    assert ConversationSemanticAnalyzer.ANALYSIS_VERSION == "conversation-v3"
+    assert ConversationSemanticAnalyzer.ANALYSIS_VERSION == "conversation-v4"
     assert "conversation_evidence" in prompt
     assert "tool_chain" not in prompt
     assert "recent_activity_entries" in SEMANTIC_SYSTEM_PROMPT
@@ -236,3 +238,108 @@ def test_semantic_prompt_uses_generic_memory_and_execution_boundaries() -> None:
     assert "密码" in SEMANTIC_SYSTEM_PROMPT
     assert "Obsidian" not in prompt
     assert "Notion" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_scope", ["工作", "work", "", "工作任务"])
+async def test_fallback_does_not_double_write_or_broaden_work_channel(model_scope):
+    text = "涉及工作任务时优先在当前对话里回复，不要发到外部群。"
+    provider = _Provider(
+        {
+            "memory_candidates": [
+                {
+                    "tag": "preference",
+                    "content": text,
+                    "subject": "self",
+                    "scope": model_scope,
+                    "value": "当前对话",
+                    "origin": "explicit_user",
+                    "source_message_id": "source",
+                    "evidence_refs": ["source"],
+                    "attributes": {"preference_key": "communication_channel"},
+                }
+            ]
+        }
+    )
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(
+        [{"id": "source", "role": "user", "content": text}]
+    )
+    assert len(result.memory_candidates) == 1
+    assert result.memory_candidates[0].subject == "用户"
+    assert result.memory_candidates[0].scope in {"work", "工作任务"}
+
+
+@pytest.mark.asyncio
+async def test_same_message_work_and_casual_preferences_stay_separate():
+    provider = _Provider(
+        {
+            "memory_candidates": [
+                {
+                    "tag": "preference",
+                    "content": value,
+                    "subject": "用户",
+                    "scope": scope,
+                    "value": value,
+                    "source_message_id": "source",
+                    "evidence_refs": ["source"],
+                    "attributes": {"preference_key": "response_style"},
+                }
+                for scope, value in [("工作", "简洁"), ("casual", "详细")]
+            ]
+        }
+    )
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(
+        [{"id": "source", "role": "user", "content": "以后工作时简洁，闲聊时详细。"}]
+    )
+    assert {(item.scope, item.value) for item in result.memory_candidates} == {
+        ("work", "简洁"),
+        ("casual", "详细"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_scoped_model_candidate_is_not_supplemented_by_global_fallback():
+    provider = _Provider(
+        {
+            "memory_candidates": [
+                {
+                    "tag": "preference",
+                    "content": "代码示例使用 Python",
+                    "scope": "代码示例",
+                    "value": "Python",
+                    "source_message_id": "source",
+                    "evidence_refs": ["source"],
+                    "attributes": {"preference_key": "code_language"},
+                }
+            ]
+        }
+    )
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(
+        [{"id": "source", "role": "user", "content": "以后代码示例默认使用 Python。"}]
+    )
+    assert len(result.memory_candidates) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attributes", [{}, {"preference_key": " Code_Language "}])
+async def test_slot_normalization_matches_governed_write_identity(attributes):
+    provider = _Provider(
+        {
+            "memory_candidates": [
+                {
+                    "tag": "preference",
+                    "content": "代码示例使用 Python",
+                    "scope": "代码示例",
+                    "value": "Python",
+                    "source_message_id": "source",
+                    "evidence_refs": ["source"],
+                    "attributes": attributes,
+                }
+            ]
+        }
+    )
+    result = await ConversationSemanticAnalyzer(provider, "light").analyze(
+        [{"id": "source", "role": "user", "content": "以后代码示例默认使用 Python。"}]
+    )
+    assert len(result.memory_candidates) == 1
+    assert result.memory_candidates[0].attributes["preference_key"] == "code_language"

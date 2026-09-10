@@ -6,6 +6,7 @@ from core.llm import LLMProvider
 from agent.subagent import SubAgent
 from agent.runtime.execution_guard import ExecutionGuardConfig
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.reasoning_policy import ReasoningPolicyConfig
 from agent.tool_hooks.base import ToolHook
 from agent.tool_bundles import build_readonly_research_tools
 from agent.tools.base import Tool
@@ -31,6 +32,7 @@ class SubagentRuntime:
     execution_guard: ExecutionGuardConfig | None = None
     graph_runtime: LangGraphRuntime | None = None
     tool_hooks: list[ToolHook] = field(default_factory=list)
+    reasoning: ReasoningPolicyConfig = field(default_factory=ReasoningPolicyConfig)
 
 
 @dataclass
@@ -49,6 +51,7 @@ class SubagentSpec:
             max_tokens=runtime.max_tokens,
             execution_guard_config=runtime.execution_guard,
             graph_runtime=runtime.graph_runtime,
+            reasoning_config=runtime.reasoning,
         )
         if runtime.tool_hooks:
             agent.add_tool_hooks(runtime.tool_hooks)

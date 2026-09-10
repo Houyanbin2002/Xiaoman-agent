@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.personal.memory_scope import render_memory_content
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -95,7 +96,7 @@ def _kind(record: PersonalRecord) -> MemoryKind | None:
 
 
 def _content(record: PersonalRecord) -> str:
-    return str(record.data.get("content") or record.summary or record.title).strip()
+    return render_memory_content(record.data, record.summary or record.title)
 
 
 def _expired(record: PersonalRecord, now: datetime) -> bool:

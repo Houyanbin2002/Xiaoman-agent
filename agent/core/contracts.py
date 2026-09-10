@@ -47,6 +47,8 @@ class Reasoner(ABC):
         permission_mode: str = "full_access",
         disabled_tools: set[str] | None = None,
         resume_from_checkpoint: bool = False,
+        reasoning_effort: str = "",
+        autonomous_delegation: bool | None = None,
     ) -> ReasonerResult: ...
 
     @abstractmethod

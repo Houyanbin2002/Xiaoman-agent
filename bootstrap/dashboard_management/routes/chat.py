@@ -5,7 +5,14 @@ import ipaddress
 from contextlib import suppress
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse
 
 from ..attachments import (
@@ -73,7 +80,9 @@ def register_chat_routes(
                 if int(content_length) > MAX_ATTACHMENT_BYTES:
                     raise HTTPException(status_code=413, detail="文件超过 128 MB 上限")
             except ValueError:
-                raise HTTPException(status_code=400, detail="文件大小信息无效") from None
+                raise HTTPException(
+                    status_code=400, detail="文件大小信息无效"
+                ) from None
         try:
             record = await attachments.save_stream(
                 chat_id=chat_id,
@@ -235,9 +244,7 @@ def register_chat_routes(
                         attachment_ids,
                     )
                 except AttachmentError as exc:
-                    await websocket.send_json(
-                        {"type": "error", "message": str(exc)}
-                    )
+                    await websocket.send_json({"type": "error", "message": str(exc)})
                     continue
                 if not content and not message_attachments:
                     await websocket.send_json(
@@ -246,19 +253,27 @@ def register_chat_routes(
                     continue
                 if not content:
                     content = "请阅读并分析这些附件。"
-                started, current = await broker.start(
-                    agent_loop=services.agent_loop,
-                    session_key=session_key,
-                    chat_id=chat_id,
-                    content=content,
-                    media=[
-                        str(record.content_path or record.path)
-                        for record in message_attachments
-                    ],
-                    attachments=[record.public() for record in message_attachments],
-                    run_id=str(payload.get("request_id") or ""),
-                    permission_mode=str(payload.get("permission_mode") or ""),
-                )
+                try:
+                    started, current = await broker.start(
+                        agent_loop=services.agent_loop,
+                        session_key=session_key,
+                        chat_id=chat_id,
+                        content=content,
+                        media=[
+                            str(record.content_path or record.path)
+                            for record in message_attachments
+                        ],
+                        attachments=[record.public() for record in message_attachments],
+                        run_id=str(payload.get("request_id") or ""),
+                        permission_mode=str(payload.get("permission_mode") or ""),
+                        reasoning_effort=str(payload.get("reasoning_effort") or ""),
+                        autonomous_delegation=payload.get(
+                            "autonomous_delegation", False
+                        ),
+                    )
+                except ValueError as exc:
+                    await websocket.send_json({"type": "error", "message": str(exc)})
+                    continue
                 if not started:
                     await websocket.send_json(
                         {

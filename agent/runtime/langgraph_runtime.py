@@ -12,6 +12,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
+from agent.runtime.delegation import DelegationLedger
 
 
 class LangGraphRuntime:
@@ -23,9 +24,14 @@ class LangGraphRuntime:
 
     def __init__(self, checkpoint_path: Path | None = None) -> None:
         self.checkpoint_path = checkpoint_path
+        self.delegation_ledger = DelegationLedger(
+            checkpoint_path.parent / "delegation-budget.db" if checkpoint_path else None
+        )
         self.store: BaseStore = InMemoryStore()
         self._checkpointer: BaseCheckpointSaver[Any] | None = None
-        self._sqlite_context: AbstractAsyncContextManager[AsyncSqliteSaver] | None = None
+        self._sqlite_context: AbstractAsyncContextManager[AsyncSqliteSaver] | None = (
+            None
+        )
         self._lock = asyncio.Lock()
 
     async def checkpointer(self) -> BaseCheckpointSaver[Any]:
@@ -47,6 +53,7 @@ class LangGraphRuntime:
 
     async def aclose(self) -> None:
         async with self._lock:
+            self.delegation_ledger.close()
             context = self._sqlite_context
             self._sqlite_context = None
             self._checkpointer = None

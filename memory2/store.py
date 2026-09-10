@@ -175,11 +175,12 @@ def _hotness_score(
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     effective_half_life = max(
-        half_life_days * (1.0 + 0.5 * _coerce_emotional_weight(emotional_weight) / 10.0),
+        half_life_days
+        * (1.0 + 0.5 * _coerce_emotional_weight(emotional_weight) / 10.0),
         0.1,
     )
-    freq    = 1.0 / (1.0 + math.exp(-math.log1p(max(0, reinforcement))))
-    age_d   = max((now - updated_at).total_seconds() / 86400.0, 0.0)
+    freq = 1.0 / (1.0 + math.exp(-math.log1p(max(0, reinforcement))))
+    age_d = max((now - updated_at).total_seconds() / 86400.0, 0.0)
     recency = math.exp(-math.log(2) / effective_half_life * age_d)
     return freq * recency
 
@@ -325,7 +326,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
 
     def _migrate_existing_to_vec(self) -> None:
         """启动时将 memory_items 中尚未同步到 vec_items 的 embedding 迁移过去。"""
-        existing = {r[0] for r in self._db.execute("SELECT rowid FROM vec_items").fetchall()}
+        existing = {
+            r[0] for r in self._db.execute("SELECT rowid FROM vec_items").fetchall()
+        }
         rows = self._db.execute(
             "SELECT rowid, embedding FROM memory_items WHERE embedding IS NOT NULL"
         ).fetchall()
@@ -482,7 +485,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
                 existing_id = already[0] or ""
                 return f"skipped:{existing_id or src}"
 
-            chash = _content_hash(text, "event")
+            # Identical wording is not identity across independent activities.
+            activity_ref = str((extra or {}).get("activity_update_ref") or "")
+            identity_text = (
+                json.dumps([text, activity_ref], ensure_ascii=False)
+                if activity_ref
+                else text
+            )
+            chash = _content_hash(identity_text, "event")
             existing = self._db.execute(
                 "SELECT id, status FROM memory_items WHERE content_hash=? AND memory_type=?",
                 (chash, "event"),
@@ -718,14 +728,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         sort_order: str = "desc",
     ) -> tuple[list[dict[str, object]], int]:
         with self._lock:
-            safe_sort_by = sort_by if sort_by in {
-                "updated_at",
-                "created_at",
-                "happened_at",
-                "reinforcement",
-                "emotional_weight",
-                "memory_type",
-            } else "created_at"
+            safe_sort_by = (
+                sort_by
+                if sort_by
+                in {
+                    "updated_at",
+                    "created_at",
+                    "happened_at",
+                    "reinforcement",
+                    "emotional_weight",
+                    "memory_type",
+                }
+                else "created_at"
+            )
             safe_sort_order = "asc" if sort_order == "asc" else "desc"
             safe_page = max(1, page)
             safe_page_size = max(1, min(page_size, 200))
@@ -735,7 +750,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             params: list[object] = []
 
             if q:
-                where_parts.append("(id LIKE ? OR summary LIKE ? OR COALESCE(source_ref, '') LIKE ?)")
+                where_parts.append(
+                    "(id LIKE ? OR summary LIKE ? OR COALESCE(source_ref, '') LIKE ?)"
+                )
                 like = f"%{q}%"
                 params.extend([like, like, like])
             if memory_type:
@@ -977,17 +994,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         filtered = [item for item in results if item.get("id") != item_id]
         return filtered[: max(1, top_k)]
 
-    def get_all_with_embedding(self, include_superseded: bool = False) -> list[_EmbeddingRow]:
+    def get_all_with_embedding(
+        self, include_superseded: bool = False
+    ) -> list[_EmbeddingRow]:
         """返回 [(id, memory_type, summary, embedding_list, extra_json_dict, happened_at, source_ref)]
         extra_json_dict 中注入 _reinforcement / _updated_at / _emotional_weight
         （_ 前缀，不污染用户字段）。
         """
         where = "" if include_superseded else "AND status='active'"
-        rows = cast(list[tuple[object, ...]], self._db.execute(
-            "SELECT id, memory_type, summary, embedding, extra_json, happened_at, "
-            "reinforcement, updated_at, source_ref, emotional_weight "
-            f"FROM memory_items WHERE embedding IS NOT NULL {where}"
-        ).fetchall())
+        rows = cast(
+            list[tuple[object, ...]],
+            self._db.execute(
+                "SELECT id, memory_type, summary, embedding, extra_json, happened_at, "
+                "reinforcement, updated_at, source_ref, emotional_weight "
+                f"FROM memory_items WHERE embedding IS NOT NULL {where}"
+            ).fetchall(),
+        )
         result: list[_EmbeddingRow] = []
         for row in rows:
             (
@@ -1046,19 +1068,24 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             where_parts.append(
                 "COALESCE(TRIM(json_extract(extra_json, '$.scope_chat_id')), '') = ?"
             )
-            params.extend([(scope_channel or "").strip(), (scope_chat_id or "").strip()])
+            params.extend(
+                [(scope_channel or "").strip(), (scope_chat_id or "").strip()]
+            )
         time_clauses, time_params = _time_prefilter_clauses(
             "happened_at", time_start, time_end
         )
         where_parts.extend(time_clauses)
         params.extend(time_params)
 
-        rows = cast(list[tuple[object, ...]], self._db.execute(
-            "SELECT id, memory_type, summary, embedding, extra_json, happened_at, "
-            "reinforcement, updated_at, source_ref, emotional_weight "
-            f"FROM memory_items WHERE {' AND '.join(where_parts)}",
-            tuple(params),
-        ).fetchall())
+        rows = cast(
+            list[tuple[object, ...]],
+            self._db.execute(
+                "SELECT id, memory_type, summary, embedding, extra_json, happened_at, "
+                "reinforcement, updated_at, source_ref, emotional_weight "
+                f"FROM memory_items WHERE {' AND '.join(where_parts)}",
+                tuple(params),
+            ).fetchall(),
+        )
         result: list[_EmbeddingRow] = []
         for row in rows:
             (
@@ -1284,7 +1311,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             WHERE 1=1 {status_filter} {type_filter} {scope_filter}
             ORDER BY v.distance ASC
         """
-        rows = cast(list[tuple[object, ...]], self._db.execute(sql, tuple(params)).fetchall())
+        rows = cast(
+            list[tuple[object, ...]], self._db.execute(sql, tuple(params)).fetchall()
+        )
 
         now = datetime.now(timezone.utc)
         scored: list[MemoryHit] = []
@@ -1432,7 +1461,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             if hotness_alpha > 0:
                 reinforcement = _coerce_int(extra.get("_reinforcement"), 1)
                 updated_at_raw = extra.get("_updated_at")
-                updated_at_str = updated_at_raw if isinstance(updated_at_raw, str) else ""
+                updated_at_str = (
+                    updated_at_raw if isinstance(updated_at_raw, str) else ""
+                )
                 emotional_weight = _coerce_emotional_weight(
                     extra.get("_emotional_weight", 0)
                 )
@@ -1491,8 +1522,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
                            reinforcement=reinforcement+1, updated_at=?
                        WHERE id=?""",
                     (
-                        new_summary, new_hash, json.dumps(new_embedding),
-                        json.dumps(new_extra), _now_iso(), item_id,
+                        new_summary,
+                        new_hash,
+                        json.dumps(new_embedding),
+                        json.dumps(new_extra),
+                        _now_iso(),
+                        item_id,
                     ),
                 )
             else:
@@ -1501,7 +1536,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
                        SET summary=?, content_hash=?, embedding=?,
                            reinforcement=reinforcement+1, updated_at=?
                        WHERE id=?""",
-                    (new_summary, new_hash, json.dumps(new_embedding), _now_iso(), item_id),
+                    (
+                        new_summary,
+                        new_hash,
+                        json.dumps(new_embedding),
+                        _now_iso(),
+                        item_id,
+                    ),
                 )
             self._db.commit()
 
@@ -1544,7 +1585,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             (memory_type,),
         ).fetchall()
         result = []
-        for row_id, mtype, summary, extra_json, happened_at, reinforcement, emotional_weight in rows:
+        for (
+            row_id,
+            mtype,
+            summary,
+            extra_json,
+            happened_at,
+            reinforcement,
+            emotional_weight,
+        ) in rows:
             result.append(
                 {
                     "id": row_id,
@@ -1567,13 +1616,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
         time_clauses, time_params = _time_prefilter_clauses(
             "happened_at", time_start, time_end
         )
-        rows = cast(list[tuple[object, ...]], self._db.execute(
-            "SELECT id, memory_type, summary, source_ref, happened_at "
-            "FROM memory_items "
-            "WHERE memory_type='event' AND status='active' "
-            f"AND {' AND '.join(time_clauses)}",
-            tuple(time_params),
-        ).fetchall())
+        rows = cast(
+            list[tuple[object, ...]],
+            self._db.execute(
+                "SELECT id, memory_type, summary, source_ref, happened_at "
+                "FROM memory_items "
+                "WHERE memory_type='event' AND status='active' "
+                f"AND {' AND '.join(time_clauses)}",
+                tuple(time_params),
+            ).fetchall(),
+        )
 
         hits: list[tuple[datetime, dict[str, object]]] = []
         for row_id, memory_type, summary, source_ref, happened_at in rows:
@@ -1662,7 +1714,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
             ).fetchone()
         return row is not None
 
-    def keyword_match_procedures(self, action_tokens: list[str]) -> list[dict[str, object]]:
+    def keyword_match_procedures(
+        self, action_tokens: list[str]
+    ) -> list[dict[str, object]]:
         """对 trigger_tags 做纯关键字匹配，无需向量检索。
 
         action_tokens 是从工具调用中提取的 token 列表，例如：
@@ -1757,7 +1811,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
                 " AND COALESCE(TRIM(json_extract(extra_json, '$.scope_channel')), '') = ?"
                 " AND COALESCE(TRIM(json_extract(extra_json, '$.scope_chat_id')), '') = ?"
             )
-            scope_params = [(scope_channel or "").strip(), (scope_chat_id or "").strip()]
+            scope_params = [
+                (scope_channel or "").strip(),
+                (scope_chat_id or "").strip(),
+            ]
 
         or_conditions = " OR ".join("summary LIKE ?" for _ in terms)
         score_expr = " + ".join(
@@ -1818,14 +1875,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
                     happened_at, time_start, time_end
                 ):
                     continue
-                results.append({
-                    "id": str(row_id),
-                    "memory_type": str(mtype),
-                    "summary": str(summary),
-                    "source_ref": str(source_ref) if source_ref else "",
-                    "happened_at": str(happened_at or created_at or ""),
-                    "keyword_score": _coerce_float(kw_score) / len(terms),
-                })
+                results.append(
+                    {
+                        "id": str(row_id),
+                        "memory_type": str(mtype),
+                        "summary": str(summary),
+                        "source_ref": str(source_ref) if source_ref else "",
+                        "happened_at": str(happened_at or created_at or ""),
+                        "keyword_score": _coerce_float(kw_score) / len(terms),
+                    }
+                )
                 if len(results) >= limit:
                     return results
             if not has_time_filter or len(rows) < batch_size:

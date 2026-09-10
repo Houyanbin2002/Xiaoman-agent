@@ -72,6 +72,7 @@ class MemoryPlugin:
             workspace=deps.workspace,
             http_resources=deps.http_resources,
             event_publisher=deps.event_publisher,
+            activity_resolver=deps.markdown.store.activity_recall_states,
         )
         default_config = load_default_memory_config()
         structured = DefaultMemoryEngine(
@@ -82,6 +83,7 @@ class MemoryPlugin:
             light_provider=deps.light_provider,
             http_resources=deps.http_resources,
             event_publisher=deps.event_publisher,
+            activity_resolver=deps.markdown.store.activity_recall_states,
         )
         personal_semantic = PersonalSemanticRecallService(
             store=PersonalMemoryVectorStore(deps.workspace / "personal.db"),

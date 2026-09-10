@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+from core.personal.memory_scope import memory_boundary
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -148,8 +150,13 @@ class MemoryGovernanceService:
         actor: str = "assistant",
         user_confirmed: bool = False,
         explicit_replaces: bool = False,
+        review_reason: str = "",
+        evidence_quote: str = "",
+        evidence_context: str = "",
     ) -> MemoryProposalResult:
         kind = normalized_memory_kind(memory.kind)
+        if source.source == "conversation_semantic_batch":
+            actor, user_confirmed = "assistant", False
         category = data_category or memory.category
         resolved_sensitivity, resolved_policy = self.personal_data.governance_defaults(
             category,
@@ -184,7 +191,8 @@ class MemoryGovernanceService:
             attributes=dict(memory.attributes),
             identity_quality=identity.quality,
         )
-        actual_confidence = max(0.0, min(1.0, float(confidence)))
+        raw_confidence = float(confidence)
+        actual_confidence = max(0.0, min(1.0, raw_confidence)) if math.isfinite(raw_confidence) else 0.0
         candidate = {
             "entity_type": PersonalEntityType.MEMORY.value,
             "record_key": identity.record_key,
@@ -201,6 +209,7 @@ class MemoryGovernanceService:
             "expires_at": expires_at,
             "user_locked": False,
             "allow_auto_update": resolved_policy == AccessPolicy.STANDARD,
+            "extraction_evidence": {"quote": evidence_quote[:1200], "context": evidence_context[:1600]},
         }
         existing = self.personal_data.store.find_active_by_key(
             PersonalEntityType.MEMORY, identity.record_key
@@ -215,12 +224,15 @@ class MemoryGovernanceService:
             str(candidate["valid_from"]),
             str(candidate.get("expires_at") or ""),
         )
-        if validity_error:
+        if existing is not None and memory_boundary(existing.data.get("subject"), existing.data.get("scope")) != memory_boundary(memory.subject, memory.scope):
+            validity_error = "subject_or_scope_mismatch"
+        identical = existing is not None and reconciliation.relation == MemorySemanticRelation.SAME and existing.data_category == category and existing.access_policy == resolved_policy and existing.sensitivity == resolved_sensitivity
+        if validity_error or (review_reason and not identical):
             conflict, _ = self.conflict_store.create_conflict(
                 record_key=identity.record_key,
                 existing_record_id=existing.id if existing is not None else None,
                 candidate=candidate,
-                reason=validity_error,
+                reason=validity_error or review_reason,
             )
             return MemoryProposalResult(
                 status="conflict_pending",
@@ -238,7 +250,8 @@ class MemoryGovernanceService:
             and reconciliation.relation == MemorySemanticRelation.SAME
             and governance_unchanged
         ):
-            self._add_evidence(existing, candidate)
+            if not review_reason:
+                self._add_evidence(existing, candidate)
             return MemoryProposalResult(
                 status="unchanged",
                 record=existing,
@@ -355,6 +368,8 @@ class MemoryGovernanceService:
         candidate = dict(conflict.candidate)
         if not candidate:
             raise ValueError("memory conflict candidate has been redacted")
+        candidate["user_locked"] = True
+        candidate["allow_auto_update"] = False
         if action == MemoryConflictAction.MERGE:
             if existing is None:
                 raise ValueError("merge requires an existing active memory")
@@ -653,6 +668,8 @@ class MemoryGovernanceService:
     def _add_evidence(self, record: PersonalRecord, candidate: dict[str, Any]) -> None:
         raw_data = candidate.get("data")
         candidate_data = raw_data if isinstance(raw_data, dict) else {}
+        evidence = candidate.get("extraction_evidence")
+        quote = evidence.get("quote") if isinstance(evidence, dict) else ""
         self.personal_data.add_memory_evidence(
             record.id,
             source=RecordSource(
@@ -660,7 +677,7 @@ class MemoryGovernanceService:
                 str(candidate.get("source_ref") or record.source.source_ref),
             ),
             statement=str(
-                candidate_data.get("content")
+                quote or candidate_data.get("content")
                 or candidate.get("summary")
                 or record.summary
             ),

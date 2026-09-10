@@ -59,10 +59,7 @@ __all__ = [
 
 @dataclass
 class FeedResult:
-    """数据拉取结果。drift_entered=True 时跳过 Judge/Resolve，直接收尾。"""
-
-    drift_entered: bool
-    base_score: float | None
+    """Optional judge input; exploration candidates still use Resolve/Deliver."""
     messages: list[dict] = field(default_factory=list)
 
 
@@ -125,7 +122,7 @@ class ProactiveTurnPipelineDeps:
 # │     ├─ 4. Resolve ── _resolve_decide
 # │     │  └─ skip 判定 / delivery_dedupe / message_dedupe → TurnResult
 # │     └─ 5. Deliver ── _deliver_execute
-# │        └─ _record_tick_log_finish → TurnOrchestrator.handle_proactive_turn
+# │        └─ TurnOrchestrator.handle_proactive_turn → _record_tick_log_finish
 # └─ done
 
 
@@ -283,18 +280,11 @@ class ProactiveTurnPipeline:
         # 2. Fetch — 外面有什么新鲜事？
         with diagnostic_context(phase="gateway"):
             feed = await self._fetch_pull(ctx)
-        if feed.drift_entered:
-            self._finalize_after_drift(ctx)
-            return feed.base_score
 
         # 3. Judge — LLM 评估哪些值得说
         if feed.messages and ctx.terminal_action is None:
             with diagnostic_context(phase="agent_loop"):
                 await self._judge_evaluate(ctx, feed.messages)
-
-        # 3.5 LLM 判定 reply 时记录 anyaction（drift 路径在 _finalize_after_drift 中处理）。
-        if ctx.terminal_action == "reply" and self._any_action_gate is not None:
-            self._any_action_gate.record_action(now_utc=ctx.now_utc)
 
         # 4. Resolve — 发还是不发？
         with diagnostic_context(phase="resolve"):
@@ -302,6 +292,8 @@ class ProactiveTurnPipeline:
 
         # 5. Deliver — 执行发送
         score = await self._deliver_execute(ctx, decision)
+        if ctx.delivery_status == "accepted" and self._any_action_gate is not None:
+            self._any_action_gate.record_action(now_utc=ctx.now_utc)
         logger.info(
             diagnostic_line(
                 "ProactiveTurnPipeline.run",
@@ -444,17 +436,17 @@ class ProactiveTurnPipeline:
                     ctx.terminal_action = "skip"
                     ctx.skip_reason = "no_content"
                     self.last_ctx = ctx
-                    return FeedResult(drift_entered=False, base_score=None)
+                    return FeedResult()
                 logger.info("[proactive_v2] fetch: empty gateway, attempting drift")
                 entered_drift = await self._drift_pipeline.run(ctx, self._llm_fn)
                 if entered_drift:
                     self._state_store.mark_drift_run(self._session_key, ctx.now_utc)
                     logger.info(
-                        "[proactive_v2] fetch: drift entered, message_sent=%s",
-                        ctx.drift_message_sent,
+                        "[proactive_v2] fetch: drift entered, decision=%s",
+                        ctx.terminal_action,
                     )
                     self.last_ctx = ctx
-                    return FeedResult(drift_entered=True, base_score=0.0)
+                    return FeedResult()
                 logger.info("[proactive_v2] fetch: drift not entered")
             logger.info("[proactive_v2] fetch: no data and fallback off → skip")
             logger.info(
@@ -473,12 +465,12 @@ class ProactiveTurnPipeline:
             ctx.terminal_action = "skip"
             ctx.skip_reason = "no_content"
             self.last_ctx = ctx
-            return FeedResult(drift_entered=False, base_score=None)
+            return FeedResult()
 
         # 2.4 llm_fn 为空 → 无法进入 Judge，直接退出。
         if self._llm_fn is None:
             self.last_ctx = ctx
-            return FeedResult(drift_entered=False, base_score=None)
+            return FeedResult()
 
         # 2.5 构造本轮 proactive 输入 messages。
         system_msg = {
@@ -501,7 +493,7 @@ class ProactiveTurnPipeline:
         }
         messages: list[dict] = [system_msg, runtime_context_msg, kickoff_msg]
 
-        return FeedResult(drift_entered=False, base_score=None, messages=messages)
+        return FeedResult(messages=messages)
 
     # ── 3. Judge ──────────────────────────────────────────────────────
 
@@ -523,20 +515,6 @@ class ProactiveTurnPipeline:
     ) -> float | None:
         return await self._deliverer.deliver(ctx, decision)
 
-    # ── drift 收尾 ────────────────────────────────────────────────────
-
-    def _finalize_after_drift(self, ctx: AgentTickContext) -> None:
-        """drift 进入后跳过正常 post_loop，直接收尾。"""
-        if self._any_action_gate is not None:
-            self._any_action_gate.record_action(now_utc=ctx.now_utc)
-        logger.info(
-            "[proactive_v2] drift entered, skipping normal post_loop message_sent=%s finished=%s",
-            ctx.drift_message_sent,
-            ctx.drift_finished,
-        )
-        self._record_tick_log_finish(ctx)
-        ctx.content_store.clear()
-
     # ── Tick 日志记录 ──────────────────────────────────────────────────
 
     def _record_tick_log_start(self, ctx: AgentTickContext) -> None:
@@ -555,8 +533,6 @@ class ProactiveTurnPipeline:
         result: TurnResult | None = None,
     ) -> None:
         decision = result.decision if result is not None else ctx.terminal_action
-        if ctx.drift_entered and result is None and decision is None:
-            decision = "reply" if ctx.drift_message_sent else "skip"
         trace_extra = (
             result.trace.extra
             if result is not None and result.trace is not None
@@ -586,6 +562,7 @@ class ProactiveTurnPipeline:
             drift_entered=ctx.drift_entered,
             final_message=final_message,
             proactive_effects=[dict(effect) for effect in self._proactive_effect_logs],
+            delivery_status=ctx.delivery_status,
         )
         self._emit_proactive_finished(
             ctx,
@@ -620,6 +597,7 @@ class ProactiveTurnPipeline:
                 context_count=len(ctx.fetched_context),
                 final_message=final_message,
                 llm_call_count=ctx.llm_call_count,
+                delivery_status=ctx.delivery_status,
                 cache_prompt_tokens=(
                     ctx.cache_prompt_tokens if ctx.cache_seen else None
                 ),

@@ -30,6 +30,7 @@ from agent.config_models import (
     WiringConfig,
 )
 from proactive_v2.config import ProactiveConfig
+from agent.runtime.reasoning_policy import ReasoningPolicyConfig
 from proactive_v2.config_loader import ProactiveConfigError, load_proactive_config
 
 _PRESETS: dict[str, str] = {
@@ -70,6 +71,15 @@ def load_config(path: str | Path = "config.toml") -> Config:
     llm_agent = _as_dict(llm.get("agent"))
     llm_vl = _as_dict(llm.get("vl"))
     agent_cfg = _as_dict(data.get("agent"))
+    reasoning = _as_dict(agent_cfg.get("reasoning"))
+    legacy_extra = _load_extra_body(data)
+    legacy_thinking = _as_dict(legacy_extra.get("thinking"))
+    legacy_reasoning_default = (
+        "none"
+        if legacy_extra.get("enable_thinking") is False
+        or legacy_thinking.get("type") == "disabled"
+        else str(legacy_extra.get("reasoning_effort") or "medium")
+    )
     agent_context = _as_dict(agent_cfg.get("context"))
     context_compaction = _as_dict(agent_context.get("compaction"))
     prompt_cache = _as_dict(agent_context.get("cache"))
@@ -88,6 +98,13 @@ def load_config(path: str | Path = "config.toml") -> Config:
     plugins = _load_plugins_config(data)
 
     return Config(
+        reasoning=ReasoningPolicyConfig(
+            default_effort=str(
+                reasoning.get("default_effort") or legacy_reasoning_default
+            ),
+            subagent_effort=str(reasoning.get("subagent_effort") or ""),
+            workflow_effort=str(reasoning.get("workflow_effort") or ""),
+        ).normalized(),
         provider=provider,
         model=str(llm_main.get("model") or data["model"]),
         api_key=_resolve(str(llm_main.get("api_key") or data.get("api_key", ""))),
@@ -149,7 +166,9 @@ def load_config(path: str | Path = "config.toml") -> Config:
             keep_recent_tokens=_to_int(
                 context_compaction.get("keep_recent_tokens", 40_000)
             ),
-            summary_max_tokens=_to_int(context_compaction.get("summary_max_tokens", 4_096)),
+            summary_max_tokens=_to_int(
+                context_compaction.get("summary_max_tokens", 4_096)
+            ),
             chunk_tokens=_to_int(context_compaction.get("chunk_tokens", 24_000)),
             max_history_messages=_to_int(
                 context_compaction.get("max_history_messages", 2_000)
@@ -168,6 +187,18 @@ def load_config(path: str | Path = "config.toml") -> Config:
             ),
         ).normalized(),
         execution_guard=ExecutionGuardConfig(
+            autonomous_delegation=bool(
+                execution_guard.get("autonomous_delegation", False)
+            ),
+            delegation_max_children=_to_int(
+                execution_guard.get("delegation_max_children", 8)
+            ),
+            delegation_total_tokens=_to_int(
+                execution_guard.get("delegation_total_tokens", 500_000)
+            ),
+            delegation_reserve_tokens=_to_int(
+                execution_guard.get("delegation_reserve_tokens", 32_000)
+            ),
             enabled=bool(execution_guard.get("enabled", True)),
             window_rounds=_to_int(execution_guard.get("window_rounds", 6)),
             same_signature_warn=_to_int(execution_guard.get("same_signature_warn", 2)),
@@ -257,9 +288,7 @@ def _load_channels_config(data: ConfigSection) -> ChannelsConfig:
                 token=token,
                 allow_from=[
                     str(u)
-                    for u in _as_list(
-                        tg.get("allow_from", tg.get("allowFrom", []))
-                    )
+                    for u in _as_list(tg.get("allow_from", tg.get("allowFrom", [])))
                 ],
                 channel_name=str(tg.get("channel_name", "telegram")),
             )
@@ -392,12 +421,8 @@ def _load_peer_agents_config(data: ConfigSection) -> list[PeerAgentConfig]:
                 cwd=str(raw_cwd) if raw_cwd not in (None, "") else None,
                 description=str(peer_agent.get("description") or ""),
                 health_path=str(peer_agent.get("health_path") or "/health"),
-                startup_timeout_s=_to_int(
-                    peer_agent.get("startup_timeout_s", 30)
-                ),
-                shutdown_timeout_s=_to_int(
-                    peer_agent.get("shutdown_timeout_s", 10)
-                ),
+                startup_timeout_s=_to_int(peer_agent.get("startup_timeout_s", 30)),
+                shutdown_timeout_s=_to_int(peer_agent.get("shutdown_timeout_s", 10)),
             )
         )
     return peer_agents

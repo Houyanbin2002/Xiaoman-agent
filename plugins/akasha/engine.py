@@ -67,6 +67,12 @@ from core.memory.engine import (
     MemoryToolSpec,
 )
 from memory2.embedder import Embedder
+from core.memory.activity import (
+    ActivityResolver,
+    activity_label,
+    activity_states,
+    current_activity_evidence,
+)
 from plugins.akasha.config import AkashaConfig, resolve_akasha_db_path
 from plugins.akasha.store import AkashaStore
 
@@ -90,8 +96,8 @@ class AkashaCard:
 @dataclass(frozen=True)
 class PendingActivation:
     query_id: str
-    seq: int          # 仅作 query_log 标识用
-    ts: float         # 用于 EdgeUpdate / last_used_ts
+    seq: int  # 仅作 query_log 标识用
+    ts: float  # 用于 EdgeUpdate / last_used_ts
     items: list[AkashaCandidate]
     query_vec: np.ndarray
 
@@ -120,9 +126,11 @@ class AkashaMemoryEngine:
         workspace: Path,
         http_resources: "SharedHttpResources",
         event_publisher: "EventBus | None" = None,
+        activity_resolver: ActivityResolver | None = None,
     ) -> None:
         # 1. 初始化 sidecar store、原始消息库路径和 embedding 客户端。
         self._config = config
+        self._activity_resolver = activity_resolver
         self._akasha_config = akasha_config
         self._workspace = workspace
         self._session_db_path = workspace / "sessions.db"
@@ -139,9 +147,7 @@ class AkashaMemoryEngine:
             or config.light_base_url
             or config.base_url
             or "",
-            api_key=embedding.api_key
-            or config.light_api_key
-            or config.api_key,
+            api_key=embedding.api_key or config.light_api_key or config.api_key,
             model=embedding.model,
             output_dimensionality=embedding.output_dimensionality,
             requester=self._embedding_requester,
@@ -193,8 +199,12 @@ class AkashaMemoryEngine:
     # 启动时自动检查 / 建 FTS IDF 表。缺失或漂移过大时重建。
     def _ensure_idf_table(self) -> None:
         from plugins.akasha.core import (
-            build_idf_table, idf_table_is_stale, load_idf_from_db, set_idf_table,
+            build_idf_table,
+            idf_table_is_stale,
+            load_idf_from_db,
+            set_idf_table,
         )
+
         sessions_db = str(self._session_db_path)
         conn = self._store.db
         try:
@@ -247,7 +257,10 @@ class AkashaMemoryEngine:
                 parameters={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "要召回的历史对话主题"},
+                        "query": {
+                            "type": "string",
+                            "description": "要召回的历史对话主题",
+                        },
                         "limit": {
                             "type": "integer",
                             "description": "最多返回条数",
@@ -276,7 +289,9 @@ class AkashaMemoryEngine:
         # 2. 空 query 不触发状态更新。
         query_text = request.text.strip()
         if not query_text:
-            return MemoryQueryResult(trace={"engine": self.DESCRIPTOR.name, "hit_count": 0})
+            return MemoryQueryResult(
+                trace={"engine": self.DESCRIPTOR.name, "hit_count": 0}
+            )
 
         # 3. 检索旧 turn 图，并在 context 入口记录本轮激活。
         now_ts = _query_timestamp_unix(request)
@@ -298,7 +313,9 @@ class AkashaMemoryEngine:
             update_state=stateful,
         )
         if stateful and request.intent in {"context", "answer"}:
-            self._remember_pending_activation(request, result.activation_items, query_vec, now_ts=now_ts)
+            self._remember_pending_activation(
+                request, result.activation_items, query_vec, now_ts=now_ts
+            )
 
         # 4. context 注入按 Akasha 配置展示 topK；工具查询继续尊重调用方 limit。
         dense_limit = self._akasha_config.dense_top_k
@@ -307,8 +324,12 @@ class AkashaMemoryEngine:
             dense_limit = min(request.limit, dense_limit)
             ripple_limit = min(request.limit, ripple_limit)
         dense_cards = self._cards_from_keys(
-            [(item.key, item.score, "dense", _candidate_signals(item)) for item in result.dense_items],
+            [
+                (item.key, item.score, "dense", _candidate_signals(item))
+                for item in result.dense_items
+            ],
             limit=dense_limit,
+            current_context=request.intent in {"context", "interest"},
         )
         dense_keys = {card.key for card in dense_cards}
         dense_pairs = {_card_dedupe_key(card) for card in dense_cards}
@@ -320,6 +341,7 @@ class AkashaMemoryEngine:
             ],
             limit=ripple_limit,
             skip_pairs=dense_pairs,
+            current_context=request.intent in {"context", "interest"},
         )
         text_block = (
             self._format_context_block(dense_cards, ripple_cards, now_ts=now_ts)
@@ -329,7 +351,11 @@ class AkashaMemoryEngine:
         cards = [*dense_cards, *ripple_cards]
 
         # 5. 记录检索诊断日志（context/answer intent 才有意义）。
-        if stateful and request.intent in {"context", "answer"} and request.scope.session_key:
+        if (
+            stateful
+            and request.intent in {"context", "answer"}
+            and request.scope.session_key
+        ):
             self._write_query_log(
                 request=request,
                 result=result,
@@ -341,7 +367,9 @@ class AkashaMemoryEngine:
 
         return MemoryQueryResult(
             text_block=text_block,
-            records=[_card_to_record(card, injected=bool(text_block)) for card in cards],
+            records=[
+                _card_to_record(card, injected=bool(text_block)) for card in cards
+            ],
             trace={
                 "engine": self.DESCRIPTOR.name,
                 "profile": self.DESCRIPTOR.profile.value,
@@ -470,7 +498,14 @@ class AkashaMemoryEngine:
         sort_order: str = "desc",
     ) -> tuple[list[dict[str, object]], int]:
         # 1. Akasha 节点的事实正文来自 sessions.db；列表只读展示时在引擎边界补齐。
-        _ = (memory_type, status, source_ref, scope_channel, scope_chat_id, has_embedding)
+        _ = (
+            memory_type,
+            status,
+            source_ref,
+            scope_channel,
+            scope_chat_id,
+            has_embedding,
+        )
         matching_anchor_ids = _find_matching_message_ids(self._session_db_path, q)
         items, total = self._store.list_items_for_dashboard(
             q=q,
@@ -604,6 +639,16 @@ class AkashaMemoryEngine:
                 source_db.close()
 
         # 3. 只读查询没有记忆动力学副作用。
+        if request.intent == "context" and getattr(self, "_activity_resolver", None):
+            eligible_cards = self._cards_from_keys(
+                [(item.key, item.score, "activation", {}) for item in activation_items],
+                limit=len(activation_items),
+                current_context=True,
+            )
+            eligible_keys = {card.key for card in eligible_cards}
+            activation_items = [
+                item for item in activation_items if item.key in eligible_keys
+            ]
         if update_state:
             updates = _activation_updates(activation_items, snapshot.nodes, now_ts)
             self._store.update_activation_batch(updates)
@@ -640,14 +685,18 @@ class AkashaMemoryEngine:
     # TurnCommitted 后把真实 user/assistant 写入 sidecar，并补本轮共激活边。
     async def _on_turn_committed(self, event: TurnCommitted) -> None:
         # 1. 跳过不应进入记忆的系统轮次。
-        if event.session_key.startswith("scheduler:") or bool((event.extra or {}).get("skip_post_memory")):
+        if event.session_key.startswith("scheduler:") or bool(
+            (event.extra or {}).get("skip_post_memory")
+        ):
             return
         messages = _load_committed_turn_messages(self._session_db_path, event)
         if not messages:
             return
 
         # 2. 分别 embed user 和 assistant，再按 cross CLI 规则合并到 turn 节点。
-        embeddings = await self._embedder.embed_batch([message.content for message in messages])
+        embeddings = await self._embedder.embed_batch(
+            [message.content for message in messages]
+        )
         current_key = ""
         for message, embedding in zip(messages, embeddings, strict=False):
             self._store.upsert_cached_embedding(
@@ -704,22 +753,24 @@ class AkashaMemoryEngine:
             self._prev_activation_by_session = prev_by_session
 
         # 2. 记录本轮激活明细，便于之后诊断。
-        self._store.insert_activation_events([
-            ActivationEventRow(
-                seq=pending.seq,
-                query_id=pending.query_id,
-                activated_key=item.key,
-                source=item.source,
-                score=item.score,
-                direct_score=item.direct,
-                state_score=item.state,
-                edge_score=item.edge,
-                long_score=item.long,
-                resource=item.resource,
-                fan=item.fan,
-            )
-            for item in pending.items
-        ])
+        self._store.insert_activation_events(
+            [
+                ActivationEventRow(
+                    seq=pending.seq,
+                    query_id=pending.query_id,
+                    activated_key=item.key,
+                    source=item.source,
+                    score=item.score,
+                    direct_score=item.direct,
+                    state_score=item.state,
+                    edge_score=item.edge,
+                    long_score=item.long,
+                    resource=item.resource,
+                    fan=item.fan,
+                )
+                for item in pending.items
+            ]
+        )
 
     # 启动时加载一次内存图。
     def _load_graph_cache(self) -> None:
@@ -762,15 +813,16 @@ class AkashaMemoryEngine:
             self._load_graph_cache()
         with self._graph_lock:
             if not hasattr(self, "_message_index"):
-                self._message_index = build_dense_message_index(self._message_embeddings)
+                self._message_index = build_dense_message_index(
+                    self._message_embeddings
+                )
             return AkashaActivationSnapshot(
                 nodes=dict(self._nodes),
                 edges=dict(self._edges),
                 edges_meta=dict(self._edges_meta),
                 fan=dict(self._fan),
                 edges_by_src={
-                    key: dict(value)
-                    for key, value in self._edges_by_src.items()
+                    key: dict(value) for key, value in self._edges_by_src.items()
                 },
                 message_embeddings=dict(self._message_embeddings),
                 message_turn_keys=dict(self._message_turn_keys),
@@ -916,6 +968,7 @@ class AkashaMemoryEngine:
         *,
         limit: int,
         skip_pairs: set[tuple[str, str]] | None = None,
+        current_context: bool = False,
     ) -> list[AkashaCard]:
         # 1. 每个 card 的正文都回 sessions.db 取，sidecar 不充当事实来源。
         cards: list[AkashaCard] = []
@@ -938,11 +991,37 @@ class AkashaMemoryEngine:
             pair_key = _card_dedupe_key(card)
             if pair_key in seen_pairs:
                 continue
-            seen_pairs.add(pair_key)
             cards.append(card)
-            if len(cards) >= limit:
-                break
-        return cards
+        resolver = getattr(self, "_activity_resolver", None)
+        refs_by_key = {
+            card.key: ["message:" + ref for ref in _source_ref_ids(card.source_ref)]
+            for card in cards
+        }
+        resolved = (
+            resolver([ref for refs in refs_by_key.values() for ref in refs])
+            if resolver
+            else {}
+        )
+        filtered = []
+        for card in cards:
+            states = activity_states(refs_by_key[card.key], resolved)
+            if current_context and not current_activity_evidence(states):
+                continue
+            pair_key = _card_dedupe_key(card)
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            filtered.append(
+                replace(
+                    card,
+                    signals={
+                        **card.signals,
+                        "activity_states": states,
+                        "activity_label": activity_label(states),
+                    },
+                )
+            )
+        return filtered[:limit]
 
     # 序列化并写入本次检索诊断日志。
     def _write_query_log(
@@ -1030,12 +1109,16 @@ class AkashaMemoryEngine:
         if store is None:
             return
         store.insert_query_log(
-            query_id=_query_log_id(request.scope.session_key or "", seq, request.intent, request.text),
+            query_id=_query_log_id(
+                request.scope.session_key or "", seq, request.intent, request.text
+            ),
             session_key=request.scope.session_key or "",
             seq=seq,
             query_text=request.text.strip(),
             intent=request.intent,
-            ts=datetime.fromtimestamp(_query_timestamp_unix(request) or 0.0, timezone.utc).isoformat(),
+            ts=datetime.fromtimestamp(
+                _query_timestamp_unix(request) or 0.0, timezone.utc
+            ).isoformat(),
             seed_count=result.trace.seed_count,
             pool_count=result.trace.pool_count,
             activated_count=len(result.activation_items),
@@ -1061,19 +1144,32 @@ class AkashaMemoryEngine:
         # 1. Dense 块优先展示重叠项，Ripple 块只展示 ripple-only。
         parts: list[str] = []
         if dense_cards or ripple_cards:
-            date_label = datetime.fromtimestamp(now_ts, timezone.utc).astimezone().strftime("%Y-%m-%d")
+            date_label = (
+                datetime.fromtimestamp(now_ts, timezone.utc)
+                .astimezone()
+                .strftime("%Y-%m-%d")
+            )
             parts.append(f"# Akasha memory now={date_label}")
         if dense_cards:
-            parts.append(_format_cards("## 左脑记忆：精确回忆", _sort_cards_by_time(dense_cards)))
+            parts.append(
+                _format_cards("## 左脑记忆：精确回忆", _sort_cards_by_time(dense_cards))
+            )
         if ripple_cards:
-            parts.append(_format_cards("## 右脑联想：潜意识第一反应", _sort_cards_by_time(ripple_cards)))
+            parts.append(
+                _format_cards(
+                    "## 右脑联想：潜意识第一反应", _sort_cards_by_time(ripple_cards)
+                )
+            )
 
         # 2. 应用字符预算，避免历史消息过长撑爆上下文。
         text = "\n\n".join(part for part in parts if part.strip())
         max_chars = max(1, self._akasha_config.inject_max_chars)
         if len(text) <= max_chars:
             return text
-        return text[:max_chars].rstrip() + f"\n...[Akasha 已截断 {len(text) - max_chars} 字]"
+        return (
+            text[:max_chars].rstrip()
+            + f"\n...[Akasha 已截断 {len(text) - max_chars} 字]"
+        )
 
 
 @dataclass(frozen=True)
@@ -1176,7 +1272,9 @@ def _load_committed_turn_messages(
     event: TurnCommitted,
 ) -> list[SourceMessage]:
     # 1. after-turn 发生在 append_messages 后，这里用内容和相邻 seq 反查稳定 id。
-    if not session_db_path.exists() or not (event.persisted_user_message or event.input_message):
+    if not session_db_path.exists() or not (
+        event.persisted_user_message or event.input_message
+    ):
         return []
     user_text = event.persisted_user_message or event.input_message
     with closing(sqlite3.connect(str(session_db_path))) as db:
@@ -1268,7 +1366,9 @@ def _load_turn_card(
         for row in (user_row, assistant_row)
         if row is not None and str(row["id"]).strip()
     ]
-    assistant_text = str(assistant_row["content"] or "") if assistant_row is not None else ""
+    assistant_text = (
+        str(assistant_row["content"] or "") if assistant_row is not None else ""
+    )
     user_text = str(user_row["content"] or "") if user_row is not None else ""
     happened_at = (
         str(user_row["ts"] or "")
@@ -1396,12 +1496,16 @@ def _normalize_card_text(text: str) -> str:
 # 生成注入去重键，只压掉 user 和助手预览都相同的候选。
 def _card_dedupe_key(card: AkashaCard) -> tuple[str, str]:
     # 1. 同一句历史消息可能在不同 turn 重复出现，展示时只保留最高分。
-    return _normalize_card_text(card.user_message), _normalize_card_text(card.assistant_preview)
+    return _normalize_card_text(card.user_message), _normalize_card_text(
+        card.assistant_preview
+    )
 
 
 def _card_ts(card: AkashaCard) -> float:
     try:
-        return datetime.fromisoformat(card.happened_at.replace("Z", "+00:00")).timestamp()
+        return datetime.fromisoformat(
+            card.happened_at.replace("Z", "+00:00")
+        ).timestamp()
     except ValueError:
         return 0.0
 
@@ -1422,16 +1526,22 @@ def _format_cards(title: str, cards: list[AkashaCard]) -> str:
     # 1. 每条 card 都带 source_ref，agent 需要事实时可继续 fetch_messages。
     lines = [title]
     for card in cards:
-        user_text = json.dumps(_normalize_card_text(card.user_message), ensure_ascii=False)
+        user_text = json.dumps(
+            _normalize_card_text(card.user_message), ensure_ascii=False
+        )
         assistant_text = json.dumps(
             _normalize_card_text(card.assistant_preview),
             ensure_ascii=False,
         )
         happened_at = _format_card_time(card.happened_at)
         time_part = f" t={happened_at}" if happened_at else ""
+        lifecycle = str(card.signals.get("activity_label") or "")
+        lifecycle_part = (
+            f" 事项当前状态={lifecycle}" if lifecycle else " 历史对话，非当前待办依据"
+        )
         lines.append(
             f"- user={user_text} assistant={assistant_text}"
-            f"{time_part} source_ref={card.source_ref}"
+            f"{time_part} source_ref={card.source_ref}{lifecycle_part}"
         )
     return "\n".join(lines)
 
@@ -1449,6 +1559,8 @@ def _card_to_record(card: AkashaCard, *, injected: bool) -> MemoryRecord:
     summary = f"user_message: {card.user_message}"
     if card.assistant_preview:
         summary += f"\nassistant_message: {card.assistant_preview}"
+    if label := str(card.signals.get("activity_label") or ""):
+        summary += f"\n[历史证据；事项当前状态：{label}]"
     return MemoryRecord(
         id=card.key,
         kind="turn",
@@ -1474,7 +1586,7 @@ def _card_to_raw(card: AkashaCard) -> dict[str, object]:
     return {
         "id": card.key,
         "memory_type": "turn",
-        "summary": f"user_message: {card.user_message}",
+        "summary": _card_to_record(card, injected=False).summary,
         "score": card.score,
         "source_ref": card.source_ref,
         "extra_json": card.signals,

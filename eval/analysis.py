@@ -8,10 +8,21 @@ from typing import Iterable
 from .models import EvalCase, EvalSummary
 
 
-def failure_hotspots(cases: Iterable[EvalCase], summary: EvalSummary) -> dict[str, object]:
+def failure_hotspots(
+    cases: Iterable[EvalCase], summary: EvalSummary
+) -> dict[str, object]:
     """Group failed/low-reward cases by slice, tag and declared failure mode."""
     case_by_id = {case.case_id: case for case in cases}
-    failed = [result for result in summary.results if not result.passed or result.reward < 0.8]
+    failed = [
+        result
+        for result in summary.results
+        if not result.passed
+        or result.reward < 0.8
+        or result.error
+        or result.run.status != "completed"
+        or result.assessment.get("accepted") is False
+        or any(not score.passed for score in result.scores)
+    ]
     slices: Counter[str] = Counter()
     tags: Counter[str] = Counter()
     modes: Counter[str] = Counter()
@@ -20,7 +31,9 @@ def failure_hotspots(cases: Iterable[EvalCase], summary: EvalSummary) -> dict[st
         case = case_by_id.get(result.case_id)
         if case is None:
             continue
-        slice_name = str(case.metadata.get("slice") or (case.tags[0] if case.tags else "unknown"))
+        slice_name = str(
+            case.metadata.get("slice") or (case.tags[0] if case.tags else "unknown")
+        )
         slices[slice_name] += 1
         tags.update(case.tags)
         failure_modes = [str(item) for item in case.metadata.get("failure_modes", ())]
@@ -34,8 +47,18 @@ def failure_hotspots(cases: Iterable[EvalCase], summary: EvalSummary) -> dict[st
                 "failure_modes": failure_modes,
                 "requires": requires,
                 "fixture_dependent": bool(requires),
-                "failed_scores": [score.name for score in result.scores if not score.passed],
+                "failed_scores": [
+                    score.name for score in result.scores if not score.passed
+                ],
+                "reasons": {
+                    score.name: score.reason
+                    for score in result.scores
+                    if not score.passed
+                },
+                "execution_status": result.run.status,
+                "exit_reason": result.run.metadata.get("exit_reason", ""),
                 "error": result.error,
+                "assessment": result.assessment,
             }
         )
     return {
@@ -53,4 +76,6 @@ def write_hotspot_report(path: str, data: dict[str, object]) -> None:
 
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    destination.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from core.attention.actions import ActionPlanStatus
+from core.attention.actions import ActionCandidate, ActionPlanStatus, ActionRisk
+from core.attention.events import EventStatus
 from core.attention.engine import AttentionEngine
 from core.attention.feedback.service import FeedbackService
 from core.attention.policies import DecisionContext
 from core.attention.providers import McpAlertSignalAdapter
-from core.personal.models import PersonalEntityType, PersonalRecord
+from core.personal.models import PersonalEntityType, PersonalRecord, RecordStatus
 from core.personal.rhythm import PersonalRhythmService
 from core.personal.service import PersonalDataService
 
@@ -41,6 +43,61 @@ class PersonalAttentionSource:
         self.rhythm = rhythm
         self.engine = engine
         self.feedback = feedback
+
+    def delivery_allowed(self, evidence: list[str], *, channel: str) -> bool:
+        """Revalidate live policy and source lifecycle at the queue exit."""
+        now = datetime.now(timezone.utc)
+        rhythm = self.rhythm.snapshot(now=now)
+        context = DecisionContext(now=now, scene=rhythm.scene.value, focus_active=rhythm.focus_active, do_not_disturb=rhythm.do_not_disturb, allow_high_priority=rhythm.allow_high_priority, channel=channel, permission_mode="delegated", attributes=self.feedback.decision_attributes(now=now) if self.feedback else {})
+        candidates = []
+        for ref in evidence:
+            prefix, _, plan_id = str(ref).partition(":")
+            if prefix != self.ack_server:
+                continue
+            plan = self.engine.repository.get_plan(plan_id)
+            if plan is None or plan.status not in {ActionPlanStatus.PROPOSED, ActionPlanStatus.APPROVED}:
+                return False
+            expiry = self._parse_datetime(plan.expires_at)
+            if expiry is not None and expiry <= now:
+                return False
+            signals = []
+            for signal_id in plan.signal_ids:
+                signal = self.engine.repository.get_signal(signal_id)
+                if signal is None or not self.engine.opportunity_manager.is_signal_actionable_now(signal, now):
+                    return False
+                event_id = str(signal.metadata.get("event_id") or "")
+                if event_id:
+                    event = self.engine.repository.get_event(event_id)
+                    if event is None or event.status != EventStatus.ACTIVE:
+                        return False
+                    expiry = self._parse_datetime(event.expires_at)
+                    if expiry is not None and expiry <= now:
+                        return False
+                if signal.source.type == "personal_record":
+                    record = self.personal_data.get(str(signal.metadata.get("source_record_id") or signal.source.reference))
+                    if record is None or record.status != RecordStatus.ACTIVE:
+                        return False
+                    if str(record.data.get("state") or record.data.get("status") or "").lower() in {"completed", "cancelled", "dismissed", "done", "closed", "inactive"} or record.data.get("enabled") is False:
+                        return False
+                    expiry = self._parse_datetime(record.expires_at)
+                    if expiry is not None and expiry <= now:
+                        return False
+                    config = record.data.get("attention_signal")
+                    if isinstance(config, dict) and config.get("enabled") is False:
+                        return False
+                signals.append(signal)
+            if not signals:
+                return False
+            candidates.append(ActionCandidate(id=plan.id, capability_id=plan.capability_id, action_type=plan.action_type, domain=signals[0].domain, risk=plan.risk, title="delivery recheck", reason="", signal_ids=plan.signal_ids, opportunity_id=plan.opportunity_id, estimated_minutes=1, inputs=plan.inputs, features={"severity": max(s.severity for s in signals)}))
+        if not candidates:
+            candidates.append(ActionCandidate(id="proactive:context", capability_id="message.notify", action_type="notify", domain="general", risk=ActionRisk.NOTIFY, title="", reason="", signal_ids=(), opportunity_id="", estimated_minutes=1, inputs={}, features={"severity": 0.0}))
+        policies = self.engine.repository.list_policies()
+        for candidate in candidates:
+            for policy_channel in {"proactive", channel}:
+                decision = self.engine.policy_engine.evaluate(candidate=candidate, context=replace(context, channel=policy_channel), policies=policies)
+                if not decision.allowed or decision.deferred or decision.require_approval:
+                    return False
+        return True
 
     async def alert_fn(
         self,

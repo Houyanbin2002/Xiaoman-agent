@@ -34,6 +34,20 @@ def compare(
     baseline_by_id = {result.case_id: result for result in baseline.results}
     candidate_by_id = {result.case_id: result for result in candidate.results}
     regressions: list[str] = []
+    if baseline.manifest or candidate.manifest:
+        for key in (
+            "dataset_sha256",
+            "split",
+            "repeats",
+            "judge_model",
+            "judge_sha256",
+            "coverage_level",
+            "case_timeout_seconds",
+        ):
+            if not baseline.manifest.get(key) or baseline.manifest.get(
+                key
+            ) != candidate.manifest.get(key):
+                regressions.append(f"incomparable:{key}")
     for case_id, old in baseline_by_id.items():
         new = candidate_by_id.get(case_id)
         if new is None:
@@ -41,8 +55,22 @@ def compare(
             continue
         if old.passed and not new.passed:
             regressions.append(f"case_failed:{case_id}")
-        old_hard = {score.name for score in old.scores if score.hard and not score.passed}
-        new_hard = {score.name for score in new.scores if score.hard and not score.passed}
+        if old.assessment.get("accepted") and not new.assessment.get("accepted"):
+            regressions.append(f"acceptance_failed:{case_id}")
+        if old.assessment.get("quality_assessed") and not new.assessment.get(
+            "quality_assessed"
+        ):
+            regressions.append(f"judge_coverage_lost:{case_id}")
+        if old.assessment.get("quality_passed") and not new.assessment.get(
+            "quality_passed"
+        ):
+            regressions.append(f"quality_failed:{case_id}")
+        old_hard = {
+            score.name for score in old.scores if score.hard and not score.passed
+        }
+        new_hard = {
+            score.name for score in new.scores if score.hard and not score.passed
+        }
         for name in sorted(new_hard - old_hard):
             regressions.append(f"hard_gate:{case_id}:{name}")
     pass_rate_delta = candidate.pass_rate - baseline.pass_rate

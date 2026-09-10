@@ -301,9 +301,7 @@ def test_marketplace_routes_search_detail_and_install(
     register_dashboard_management(app, services)
     try:
         with TestClient(app) as client:
-            search = client.get(
-                "/api/dashboard/control/marketplace?kind=mcp&q=docs"
-            )
+            search = client.get("/api/dashboard/control/marketplace?kind=mcp&q=docs")
             detail = client.get(
                 "/api/dashboard/control/marketplace/items/vendor/docs?kind=mcp"
             )
@@ -730,6 +728,41 @@ def test_dashboard_chat_websocket_round_trip(tmp_path: Path) -> None:
     _close_services(services)
 
 
+def test_dashboard_chat_forwards_reasoning_effort_and_rejects_unknown_value(
+    tmp_path: Path,
+) -> None:
+    app = FastAPI()
+    services = _services(tmp_path)
+    loop = _CapturingAgentLoop()
+    services.agent_loop = loop
+    register_dashboard_management(app, services)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/dashboard/chat/reasoning") as websocket:
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json({"content": "复杂分析", "reasoning_effort": "high"})
+            status = websocket.receive_json()
+            assert status["reasoning_effort"] == "high"
+            assert websocket.receive_json()["type"] == "final"
+            assert loop.calls[0][1]["reasoning_effort"] == "high"
+            assert loop.calls[0][1]["autonomous_delegation"] is False
+            websocket.send_json({"content": "并行分析", "autonomous_delegation": True})
+            assert websocket.receive_json()["autonomous_delegation"] is True
+            assert websocket.receive_json()["type"] == "final"
+            assert loop.calls[1][1]["autonomous_delegation"] is True
+            websocket.send_json(
+                {"content": "非法授权", "autonomous_delegation": "true"}
+            )
+            assert websocket.receive_json()["type"] == "error"
+            assert len(loop.calls) == 2
+
+            websocket.send_json({"content": "非法设置", "reasoning_effort": "adaptive"})
+            error = websocket.receive_json()
+            assert error["type"] == "error"
+            assert "思考等级必须是" in error["message"]
+    _close_services(services)
+
+
 def test_dashboard_generated_artifact_is_downloadable(tmp_path: Path) -> None:
     artifact = tmp_path / "reports" / "assistant-report.pdf"
     artifact.parent.mkdir()
@@ -756,9 +789,7 @@ def test_dashboard_generated_artifact_is_downloadable(tmp_path: Path) -> None:
     register_dashboard_management(app, services)
 
     with TestClient(app) as client:
-        with client.websocket_connect(
-            "/api/dashboard/chat/artifact-chat"
-        ) as websocket:
+        with client.websocket_connect("/api/dashboard/chat/artifact-chat") as websocket:
             assert websocket.receive_json()["type"] == "ready"
             websocket.send_json({"content": "制作报告并发送给我"})
             assert websocket.receive_json()["type"] == "status"
@@ -829,7 +860,9 @@ def test_dashboard_chat_attachment_rejects_unsupported_files(tmp_path: Path) -> 
     _close_services(services)
 
 
-def test_dashboard_chat_parses_binary_document_before_agent_turn(tmp_path: Path) -> None:
+def test_dashboard_chat_parses_binary_document_before_agent_turn(
+    tmp_path: Path,
+) -> None:
     app = FastAPI()
     services = _services(tmp_path)
     loop = _CapturingAgentLoop()
@@ -1004,7 +1037,9 @@ def test_personal_data_and_routine_routes_use_shared_runtime(tmp_path: Path) -> 
     _close_services(services)
 
 
-def test_external_source_and_today_routes_share_canonical_records(tmp_path: Path) -> None:
+def test_external_source_and_today_routes_share_canonical_records(
+    tmp_path: Path,
+) -> None:
     app = FastAPI()
     services = _services(tmp_path)
     register_dashboard_management(app, services)
@@ -1258,8 +1293,7 @@ def test_memory_knowledge_graph_exposes_user_facing_semantic_relations(
     assert payload["center_id"] == "person:self"
     assert {node["label"] for node in payload["nodes"]} >= {"我", "小林"}
     assert {
-        (edge["source"], edge["label"], edge["target"])
-        for edge in payload["edges"]
+        (edge["source"], edge["label"], edge["target"]) for edge in payload["edges"]
     } == {("person:self", "研究生同学", "entity:小林")}
     xiaolin = next(node for node in payload["nodes"] if node["label"] == "小林")
     assert xiaolin["memory_ids"]
@@ -1311,9 +1345,9 @@ def test_unified_extensions_route_preserves_skill_and_mcp_hashes() -> None:
 
 
 def test_skill_capability_cards_keep_real_install_actions() -> None:
-    source = Path(
-        "frontend/dashboard/src/features/skills/SkillsView.tsx"
-    ).read_text(encoding="utf-8")
+    source = Path("frontend/dashboard/src/features/skills/SkillsView.tsx").read_text(
+        encoding="utf-8"
+    )
 
     assert "interface SkillsViewProps" in source
     assert 'className="capability-grid extension-capability-grid' in source
@@ -1324,12 +1358,12 @@ def test_skill_capability_cards_keep_real_install_actions() -> None:
 
 
 def test_mcp_capability_cards_expose_real_actions_in_detail_drawer() -> None:
-    cards = Path(
-        "frontend/dashboard/src/features/mcp/McpCards.tsx"
-    ).read_text(encoding="utf-8")
-    view = Path(
-        "frontend/dashboard/src/features/mcp/McpView.tsx"
-    ).read_text(encoding="utf-8")
+    cards = Path("frontend/dashboard/src/features/mcp/McpCards.tsx").read_text(
+        encoding="utf-8"
+    )
+    view = Path("frontend/dashboard/src/features/mcp/McpView.tsx").read_text(
+        encoding="utf-8"
+    )
 
     assert "CapabilityLogo" in cards
     assert "sourceStateForServer" in cards
@@ -1357,8 +1391,7 @@ def test_extension_card_footer_resets_global_tag_row_spacing() -> None:
     ).read_text(encoding="utf-8")
 
     assert (
-        ".desktop-app .extension-card-footer .tag-row {"
-        " min-width: 0; margin-top: 0;"
+        ".desktop-app .extension-card-footer .tag-row {" " min-width: 0; margin-top: 0;"
     ) in styles
 
 

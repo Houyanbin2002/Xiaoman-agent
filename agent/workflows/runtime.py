@@ -13,6 +13,15 @@ from langgraph.types import Command, interrupt
 
 from agent.tools.registry import ToolRegistry
 from agent.runtime.langgraph_runtime import LangGraphRuntime
+from agent.runtime.execution_guard import ExecutionGuardConfig
+from agent.runtime.execution_policy import IncompleteExecutionError
+from agent.runtime.delegation import (
+    CONTEXT_KEY,
+    DelegationScope,
+    DelegationBudgetExceeded,
+    current_scope,
+    new_scope,
+)
 from core.workflow.models import (
     SUCCESS_STEP_STATUSES,
     StepExecutor,
@@ -26,6 +35,10 @@ from core.workflow.models import (
 from core.workflow.ports import WorkflowStorePort
 from core.tracing import current_trace_id, record_trace_event, trace_root
 from core.tracing.ports import TraceRecorder
+from agent.runtime.reasoning_policy import (
+    REASONING_EFFORTS,
+    WORKFLOW_REASONING_CONTEXT_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +69,8 @@ class AgentLoopPort(Protocol):
         trace_id: str = "",
         trace_flow: str = "workflow",
         trace_title: str = "",
+        reasoning_effort: str = "",
+        require_completed: bool = False,
     ) -> str: ...
 
 
@@ -67,6 +82,7 @@ class SubagentExecutorPort(Protocol):
         label: str | None,
         profile: str = "research",
         execution_id: str | None = None,
+        reasoning_effort: str = "",
     ) -> str: ...
 
 
@@ -91,6 +107,7 @@ class WorkflowRuntime:
         max_concurrency: int = 2,
         step_timeout_seconds: float = 180.0,
         max_subagent_steps: int = 4,
+        delegation_guard: ExecutionGuardConfig | None = None,
     ) -> None:
         self.store = store
         self._agent_loop_provider = agent_loop_provider
@@ -105,6 +122,9 @@ class WorkflowRuntime:
         self._max_concurrency = max(1, max_concurrency)
         self._step_timeout_seconds = max(10.0, float(step_timeout_seconds))
         self._max_subagent_steps = max(1, int(max_subagent_steps))
+        self._delegation_guard = (
+            delegation_guard or ExecutionGuardConfig()
+        ).normalized()
         self._execution_slots = asyncio.Semaphore(self._max_concurrency)
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
@@ -129,6 +149,16 @@ class WorkflowRuntime:
         """Validate execution permissions before persisting a workflow."""
 
         self._validate_step_permissions(steps)
+        context = dict(context or {})
+        policy = context.get(CONTEXT_KEY)
+        if not isinstance(policy, dict):
+            policy = new_scope(
+                self._graph_runtime.delegation_ledger,
+                self._delegation_guard,
+                allowed=self._delegation_guard.autonomous_delegation,
+            ).metadata()
+            context[CONTEXT_KEY] = policy
+        self._validate_delegation(steps, policy)
         return self.store.create_workflow(
             name=name,
             goal=goal,
@@ -140,6 +170,40 @@ class WorkflowRuntime:
             context=context,
             auto_start=auto_start,
         )
+
+    @staticmethod
+    def _validate_delegation(steps: Sequence[StepSpec], policy: dict[str, Any]) -> None:
+        if policy.get("allowed") is True:
+            return
+        if any(step.executor == StepExecutor.SUBAGENT for step in steps):
+            raise ValueError(
+                "自主多 Agent 已关闭，不能创建 SubAgent。请留在主 AgentLoop 执行，或请用户在聊天框开启多 Agent 后重新创建任务。"
+            )
+        # Keep durable sequential plans available, but don't bypass the switch
+        # by naming concurrent children 'agent' rather than 'subagent'.
+        ancestors: dict[str, set[str]] = {}
+        by_id = {step.id: step for step in steps}
+
+        def dependencies(key: str, visiting: set[str]) -> set[str]:
+            if key in visiting or key not in by_id:
+                return set()
+            found = set(by_id[key].depends_on)
+            for dep in by_id[key].depends_on:
+                found |= dependencies(dep, visiting | {key})
+            return found
+
+        automatic = [step for step in steps if step.kind == StepKind.AGENT]
+        for step in automatic:
+            ancestors[step.id] = dependencies(step.id, set())
+        for index, step in enumerate(automatic):
+            for other in automatic[index + 1 :]:
+                if (
+                    step.id not in ancestors[other.id]
+                    and other.id not in ancestors[step.id]
+                ):
+                    raise ValueError(
+                        "自主多 Agent 已关闭，不允许并行自动步骤。请在主循环完成独立工作，或开启多 Agent。"
+                    )
 
     def _validate_step_permissions(self, steps: Sequence[StepSpec]) -> None:
         subagent_steps = sum(
@@ -204,6 +268,9 @@ class WorkflowRuntime:
         """Validate and replace the unresolved tail of a persisted plan."""
 
         current = self.store.require_workflow(workflow_id)
+        self._validate_delegation(
+            remaining_steps, dict(current.context.get(CONTEXT_KEY) or {})
+        )
         preserved = [
             step for step in current.steps if step.status in SUCCESS_STEP_STATUSES
         ]
@@ -555,10 +622,20 @@ class WorkflowRuntime:
                 self._run_step_executor(latest, current, prompt),
                 timeout=self._step_timeout_seconds,
             )
-            output = result.strip() or "步骤已完成，但没有返回文本结果。"
+            output = result.strip()
+            if not output:
+                raise IncompleteExecutionError("empty_result")
             self.store.complete_step(latest.id, current.id, output=output)
         except asyncio.CancelledError:
             raise
+        except (DelegationBudgetExceeded, IncompleteExecutionError) as exc:
+            self.store.fail_step(
+                workflow.id,
+                step.id,
+                error=str(exc),
+                retry_delay_seconds=0,
+                retryable=False,
+            )
         except TimeoutError:
             logger.warning(
                 "workflow step timed out workflow=%s step=%s timeout=%ss",
@@ -594,6 +671,35 @@ class WorkflowRuntime:
         step: WorkflowStep,
         prompt: str,
     ) -> str:
+        policy = workflow.context.get(CONTEXT_KEY) or {}
+        if step.executor == StepExecutor.SUBAGENT and policy.get("allowed") is not True:
+            raise RuntimeError(
+                "任务没有多 Agent 授权，未启动 SubAgent。请开启后重新创建。"
+            )
+        key = str(policy.get("budget_id") or "")
+        # Legacy workflows receive a stable task budget; new workflows use
+        # their origin turn's ledger. Never reset an existing budget on retry.
+        if not key:
+            scope = new_scope(
+                self._graph_runtime.delegation_ledger,
+                self._delegation_guard,
+                key=f"workflow:{workflow.id}",
+            )
+        else:
+            scope = DelegationScope(self._graph_runtime.delegation_ledger, key)
+        scope.ledger.claim_child(scope.key, f"{workflow.id}:{step.id}")
+        token = current_scope.set(DelegationScope(scope.ledger, scope.key, False, True))
+        try:
+            return await self._run_step_executor_inner(workflow, step, prompt)
+        finally:
+            current_scope.reset(token)
+
+    async def _run_step_executor_inner(
+        self,
+        workflow: WorkflowInstance,
+        step: WorkflowStep,
+        prompt: str,
+    ) -> str:
         if step.executor == StepExecutor.SUBAGENT:
             if self.subagent_executor is None:
                 raise RuntimeError("Subagent 步骤执行器未启用")
@@ -605,27 +711,58 @@ class WorkflowRuntime:
                     f"步骤 {step.id} 使用 subagent profile={step.profile} "
                     "时缺少已批准的直接 approval 依赖"
                 )
+            reasoning_effort = self._workflow_reasoning_effort(workflow)
+            execute_kwargs: dict[str, Any] = {
+                "task": prompt,
+                "label": f"{workflow.name}-{step.title}"[:30],
+                "profile": step.profile,
+                "execution_id": f"task-{workflow.id[:12]}-{step.id}",
+            }
+            if reasoning_effort:
+                execute_kwargs["reasoning_effort"] = reasoning_effort
             return await self.subagent_executor.execute(
-                task=prompt,
-                label=f"{workflow.name}-{step.title}"[:30],
-                profile=step.profile,
-                execution_id=f"task-{workflow.id[:12]}-{step.id}",
+                **execute_kwargs,
             )
 
         loop = self._agent_loop_provider()
         if loop is None:
             raise RuntimeError("AgentLoop 尚未就绪")
+        reasoning_effort = self._workflow_reasoning_effort(workflow)
+        process_kwargs: dict[str, Any] = {
+            "session_key": f"workflow:{workflow.id}:step:{step.id}",
+            "busy_session_key": workflow.session_key or None,
+            "channel": workflow.channel or "workflow",
+            "chat_id": workflow.chat_id or workflow.id,
+            "omit_user_turn": True,
+            "skip_post_memory": True,
+            "stream_events": False,
+            "disabled_tools": self._disabled_tools_for_step(workflow, step),
+        }
+        # Third-party/test loop adapters may implement the older port. Use the
+        # strict completion contract when available, while preserving the port
+        # compatibility required by existing integrations.
+        try:
+            if "require_completed" in inspect.signature(loop.process_direct).parameters:
+                process_kwargs["require_completed"] = True
+        except (TypeError, ValueError):
+            pass
+        if reasoning_effort:
+            process_kwargs["reasoning_effort"] = reasoning_effort
         return await loop.process_direct(
             prompt,
-            session_key=f"workflow:{workflow.id}",
-            busy_session_key=workflow.session_key or None,
-            channel=workflow.channel or "workflow",
-            chat_id=workflow.chat_id or workflow.id,
-            omit_user_turn=True,
-            skip_post_memory=True,
-            stream_events=False,
-            disabled_tools=self._disabled_tools_for_step(workflow, step),
+            **process_kwargs,
         )
+
+    @staticmethod
+    def _workflow_reasoning_effort(workflow: WorkflowInstance) -> str:
+        """Read only the trusted, persisted parent choice for this workflow."""
+
+        value = (
+            str((workflow.context or {}).get(WORKFLOW_REASONING_CONTEXT_KEY) or "")
+            .strip()
+            .lower()
+        )
+        return value if value in REASONING_EFFORTS else ""
 
     def _disabled_tools_for_step(
         self,
@@ -688,7 +825,12 @@ class WorkflowRuntime:
             dependency_outputs.append(
                 f"- {dependency.title} ({dependency.id}): {self._compact_value(dependency.output, 1800)}"
             )
-        context = self._compact_value(workflow.context, 1800)
+        # The parent reasoning choice is an execution concern, not task data;
+        # keep it durable for retries without leaking it into the model prompt.
+        prompt_context = dict(workflow.context or {})
+        prompt_context.pop(WORKFLOW_REASONING_CONTEXT_KEY, None)
+        prompt_context.pop(CONTEXT_KEY, None)
+        context = self._compact_value(prompt_context, 1800)
         inputs = self._compact_value(step.input, 1800)
         previous = "\n".join(dependency_outputs) or "（无前置步骤）"
         return (

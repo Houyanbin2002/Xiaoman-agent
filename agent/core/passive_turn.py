@@ -42,6 +42,7 @@ from agent.runtime.context_compaction import (
 from agent.runtime.langgraph_agent import LangGraphAgentExecutor
 from agent.runtime.langgraph_runtime import LangGraphRuntime
 from agent.runtime.model_step import run_model_step
+from agent.runtime.delegation import DelegationBudgetExceeded
 from agent.runtime.prompt_cache import PromptCacheConfig, PromptCacheOptimizer
 from agent.tool_hooks import ToolExecutor
 from agent.turns.outbound import OutboundDispatch, OutboundPort
@@ -62,7 +63,10 @@ from agent.lifecycle.phases.before_reasoning import (
     BeforeReasoningFrame,
     default_before_reasoning_modules,
 )
-from agent.lifecycle.phases.before_step import BeforeStepFrame, default_before_step_modules
+from agent.lifecycle.phases.before_step import (
+    BeforeStepFrame,
+    default_before_step_modules,
+)
 from agent.lifecycle.phases.before_turn import (
     BeforeTurnFrame,
     MemoryConsolidator,
@@ -255,7 +259,9 @@ class PassiveTurnPipeline:
         self._context = deps.context
         self._tools = deps.tools
         self._reasoner = deps.reasoner
-        add_before_step = getattr(self._reasoner, "add_before_step_plugin_modules", None)
+        add_before_step = getattr(
+            self._reasoner, "add_before_step_plugin_modules", None
+        )
         if add_before_step is not None:
             add_before_step(list(deps.before_step_plugin_modules or []))
         add_after_step = getattr(self._reasoner, "add_after_step_plugin_modules", None)
@@ -308,7 +314,9 @@ class PassiveTurnPipeline:
         self._after_turn_plugin_modules.extend(modules)
         self._after_turn = self._build_after_turn_phase()
 
-    def _build_before_turn_phase(self) -> Phase[TurnState, BeforeTurnCtx, BeforeTurnFrame]:
+    def _build_before_turn_phase(
+        self,
+    ) -> Phase[TurnState, BeforeTurnCtx, BeforeTurnFrame]:
         return Phase(
             default_before_turn_modules(
                 self._bus,
@@ -497,6 +505,10 @@ class PassiveTurnPipeline:
                         duration_ms=int((time.perf_counter() - started) * 1000),
                     )
                 )
+            except DelegationBudgetExceeded:
+                # Workflow owns this terminal admission failure. Returning an
+                # ordinary error reply here would falsely complete its step.
+                raise
             except Exception as exc:
                 record_trace_event(
                     category="turn",
@@ -739,6 +751,7 @@ class DefaultContextStore(ContextStore):
             history_messages=history_messages,
         )
 
+
 class AgentExecutionKernel(Reasoner):
     """唯一的 Agent 执行内核；主 Agent/SubAgent 仅注入不同状态与策略。"""
 
@@ -787,21 +800,23 @@ class AgentExecutionKernel(Reasoner):
         self._before_step_plugin_modules: list[object] = []
         self._after_step_plugin_modules: list[object] = []
         self._tool_executor = ToolExecutor([])
-        self._stream_sink_factory: Callable[
-            [object], Callable[[dict[str, str] | str], Awaitable[None]] | None
-        ] | None = None
+        self._stream_sink_factory: (
+            Callable[[object], Callable[[dict[str, str] | str], Awaitable[None]] | None]
+            | None
+        ) = None
         bus = event_bus or EventBus()
         self._bus = bus
         self._before_step = self._build_before_step_phase()
         self._after_step = self._build_after_step_phase()
-        self._prompt_render: Phase[
-            PromptRenderInput,
-            PromptRenderResult,
-            PromptRenderFrame,
-        ] | None = (
-            self._build_prompt_render_phase(context)
-            if context is not None
-            else None
+        self._prompt_render: (
+            Phase[
+                PromptRenderInput,
+                PromptRenderResult,
+                PromptRenderFrame,
+            ]
+            | None
+        ) = (
+            self._build_prompt_render_phase(context) if context is not None else None
         )
 
     def add_tool_hooks(self, hooks: list["ToolHook"]) -> None:
@@ -840,7 +855,9 @@ class AgentExecutionKernel(Reasoner):
             frame_factory=BeforeStepFrame,
         )
 
-    def _build_after_step_phase(self) -> Phase[AfterStepCtx, AfterStepCtx, AfterStepFrame]:
+    def _build_after_step_phase(
+        self,
+    ) -> Phase[AfterStepCtx, AfterStepCtx, AfterStepFrame]:
         return Phase(
             default_after_step_modules(
                 self._bus,
@@ -874,10 +891,10 @@ class AgentExecutionKernel(Reasoner):
 
     def set_stream_sink_factory(
         self,
-        factory: Callable[
-            [object], Callable[[dict[str, str] | str], Awaitable[None]] | None
-        ]
-        | None,
+        factory: (
+            Callable[[object], Callable[[dict[str, str] | str], Awaitable[None]] | None]
+            | None
+        ),
     ) -> None:
         self._stream_sink_factory = factory
 
@@ -894,7 +911,9 @@ class AgentExecutionKernel(Reasoner):
         from agent.core.runtime_support import TurnRunResult
 
         if self._context is None or self._session_manager is None:
-            raise RuntimeError("AgentExecutionKernel.run_turn requires context and session_manager")
+            raise RuntimeError(
+                "AgentExecutionKernel.run_turn requires context and session_manager"
+            )
         if self._prompt_render is None:
             self._prompt_render = self._build_prompt_render_phase(self._context)
 
@@ -943,6 +962,11 @@ class AgentExecutionKernel(Reasoner):
         source_history = load_history()
         disabled_tools = _disabled_tools_from_msg(msg)
         permission_mode = _permission_mode_from_msg(msg)
+        reasoning_effort = str(
+            (getattr(msg, "metadata", None) or {}).get("reasoning_effort")
+            or (getattr(session, "metadata", None) or {}).get("reasoning_effort")
+            or ""
+        )
         preloaded: set[str] | None = None
         preloaded_order: list[str] = []
         capability_route = self._capability_router.route(
@@ -955,9 +979,7 @@ class AgentExecutionKernel(Reasoner):
         if self._tool_search_enabled:
             preloaded_order = self._discovery.get_preloaded_ordered(session.key)
             preloaded_order = list(
-                dict.fromkeys(
-                    [*preloaded_order, *capability_route.preloaded_tools]
-                )
+                dict.fromkeys([*preloaded_order, *capability_route.preloaded_tools])
             )
             preloaded = set(preloaded_order)
             logger.info(
@@ -966,7 +988,9 @@ class AgentExecutionKernel(Reasoner):
                 skill_names,
             )
         stream_sink = (
-            self._stream_sink_factory(msg) if self._stream_sink_factory is not None else None
+            self._stream_sink_factory(msg)
+            if self._stream_sink_factory is not None
+            else None
         )
 
         turn_injection_prompt = build_turn_injection_prompt(
@@ -981,9 +1005,7 @@ class AgentExecutionKernel(Reasoner):
         route_prompt = capability_route.prompt()
         if route_prompt:
             turn_injection_prompt = "\n\n".join(
-                part
-                for part in (route_prompt, turn_injection_prompt.strip())
-                if part
+                part for part in (route_prompt, turn_injection_prompt.strip()) if part
             )
 
         async def render_current_history() -> tuple[list[dict], int]:
@@ -1080,6 +1102,17 @@ class AgentExecutionKernel(Reasoner):
                     tool_event_chat_id=msg.chat_id,
                     request_text=msg.content,
                     permission_mode=permission_mode,
+                    reasoning_effort=reasoning_effort,
+                    **(
+                        {"autonomous_delegation": msg.metadata["autonomous_delegation"]}
+                        if isinstance(
+                            (getattr(msg, "metadata", None) or {}).get(
+                                "autonomous_delegation"
+                            ),
+                            bool,
+                        )
+                        else {}
+                    ),
                     disabled_tools=disabled_tools,
                     resume_from_checkpoint=bool(
                         (getattr(msg, "metadata", None) or {}).get(
@@ -1119,8 +1152,12 @@ class AgentExecutionKernel(Reasoner):
                     if summary_state is not None:
                         compacted_this_turn = True
                         source_history = load_history()
-                        initial_messages, estimated_tokens = await render_current_history()
-                        retry_trace["estimated_input_tokens_after_compaction"] = estimated_tokens
+                        initial_messages, estimated_tokens = (
+                            await render_current_history()
+                        )
+                        retry_trace["estimated_input_tokens_after_compaction"] = (
+                            estimated_tokens
+                        )
                         retry_trace["compaction"] = summary_state.to_metadata()
                         continue
                 logger.warning("上下文超长：摘要后仍超限，不执行删除式降级")
@@ -1150,6 +1187,7 @@ class AgentExecutionKernel(Reasoner):
             if isinstance(llm_context_frame, str) and llm_context_frame.strip():
                 retry_trace["llm_context_frame"] = llm_context_frame
             retry_trace["react_stats"] = dict(result.metadata.get("react_stats") or {})
+            retry_trace["exit_reason"] = str(result.metadata.get("exit_reason") or "unknown")
             return TurnRunResult(
                 reply=result.reply,
                 tools_used=tools_used,
@@ -1175,6 +1213,8 @@ class AgentExecutionKernel(Reasoner):
         permission_mode: str = "full_access",
         disabled_tools: set[str] | None = None,
         resume_from_checkpoint: bool = False,
+        reasoning_effort: str = "",
+        autonomous_delegation: bool | None = None,
     ) -> ReasonerResult:
         del preflight_injected
         return await self._graph_executor.run(
@@ -1190,6 +1230,8 @@ class AgentExecutionKernel(Reasoner):
             permission_mode=permission_mode,
             disabled_tools=disabled_tools,
             resume_from_checkpoint=resume_from_checkpoint,
+            reasoning_effort=reasoning_effort,
+            autonomous_delegation=autonomous_delegation,
         )
 
     async def _observe_tool_call_started(
@@ -1255,6 +1297,8 @@ class AgentExecutionKernel(Reasoner):
         reason: str,
         iteration: int,
         tools_used: list[str],
+        reasoning_extra_body: dict[str, Any] | None = None,
+        disable_thinking: bool = False,
     ) -> ProgressSummary:
         # 1. 先构造收尾总结 prompt。
         summary_prompt = self._execution_policy.build_summary_prompt(
@@ -1272,7 +1316,8 @@ class AgentExecutionKernel(Reasoner):
             response = await asyncio.wait_for(
                 run_model_step(
                     self._llm.provider,
-                    messages=cache_view.messages + [
+                    messages=cache_view.messages
+                    + [
                         support.build_context_hint_message(
                             "summary_request",
                             summary_prompt,
@@ -1284,6 +1329,8 @@ class AgentExecutionKernel(Reasoner):
                     source=self._execution_policy.source,
                     iteration=iteration + 1,
                     purpose="incomplete_summary",
+                    extra_body=reasoning_extra_body,
+                    disable_thinking=disable_thinking,
                     cache_metadata=cache_view.plan.to_metadata(),
                 ),
                 timeout=self._execution_guard.config.model_call_timeout_seconds,
@@ -1291,6 +1338,8 @@ class AgentExecutionKernel(Reasoner):
             text = (response.content or "").strip()
             if text:
                 return ProgressSummary(text=text)
+        except DelegationBudgetExceeded:
+            raise
         except Exception as exc:
             logger.warning("生成预算收尾总结失败: %s", exc)
 
@@ -1340,7 +1389,9 @@ class AgentExecutionKernel(Reasoner):
             "iteration_count": len(react_input_samples),
             "turn_input_sum_tokens": sum(react_input_samples),
             "turn_input_peak_tokens": max(react_input_samples, default=0),
-            "final_call_input_tokens": react_input_samples[-1] if react_input_samples else 0,
+            "final_call_input_tokens": (
+                react_input_samples[-1] if react_input_samples else 0
+            ),
         }
         if cache_seen:
             react_stats["cache_prompt_tokens"] = cache_prompt_tokens
@@ -1546,8 +1597,7 @@ class AgentExecutionKernel(Reasoner):
                 await self._summarize_context_text(
                     (
                         f"这是 epoch {epoch} 的第 {index}/{len(chunks)} 个旧对话证据分块。\n"
-                        "请提取跨回合继续工作所需的全部有效状态。\n\n"
-                        + chunk
+                        "请提取跨回合继续工作所需的全部有效状态。\n\n" + chunk
                     ),
                     purpose="context_summary_map",
                     iteration=index,
@@ -1576,8 +1626,7 @@ class AgentExecutionKernel(Reasoner):
                 await self._summarize_context_text(
                     (
                         f"合并 epoch {epoch} 的摘要材料（reduce round {round_index}）。\n"
-                        "保留仍有效信息并消除重复、冲突和已被替代的旧结论。\n\n"
-                        + group
+                        "保留仍有效信息并消除重复、冲突和已被替代的旧结论。\n\n" + group
                     ),
                     purpose="context_summary_reduce",
                     iteration=round_index * 1000 + index,
@@ -1621,12 +1670,12 @@ class AgentExecutionKernel(Reasoner):
             raise RuntimeError(f"{purpose} returned empty content")
         return content
 
+
 class DefaultReasoner(AgentExecutionKernel):
     """主 Agent 适配器；执行控制流由 AgentExecutionKernel 统一提供。"""
 
 
 # ── 模块级辅助函数 ──────────────────────────────────────────────
-
 
 
 def get_history_since_consolidated(
@@ -1648,9 +1697,7 @@ def extract_model_facing_turn(
     if not messages:
         return None, None
     user_content = (
-        messages[-1].get("content")
-        if messages[-1].get("role") == "user"
-        else None
+        messages[-1].get("content") if messages[-1].get("role") == "user" else None
     )
     if len(messages) < 2:
         return user_content, None
@@ -1716,6 +1763,6 @@ def build_deferred_tools_hint(
     ]
     lines.append(
         "系统只展示与本轮相关的少量能力。已知名称可用 "
-        "tool_search(query=\"select:名称\")；否则直接描述目标功能搜索。"
+        'tool_search(query="select:名称")；否则直接描述目标功能搜索。'
     )
     return "\n".join(lines) + "\n\n"

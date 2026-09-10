@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from agent.runtime.prompt_cache import PromptCacheConfig
 from agent.runtime.context_compaction import ContextCompactionConfig
 from agent.runtime.execution_guard import ExecutionGuardConfig
+from agent.runtime.reasoning_policy import ReasoningPolicyConfig
 
 if TYPE_CHECKING:
     from agent.context import ContextBuilder
@@ -39,6 +40,7 @@ class LLMConfig:
     tool_search_enabled: bool = False
     multimodal: bool = True
     vl_available: bool = False
+    reasoning: ReasoningPolicyConfig = field(default_factory=ReasoningPolicyConfig)
 
 
 @dataclass
@@ -98,6 +100,7 @@ class AgentLoopDeps:
     trace_recorder: "TraceRecorder | None" = None
     graph_runtime: "LangGraphRuntime | None" = None
 
+
 @dataclass
 class AgentLoopConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -106,6 +109,4 @@ class AgentLoopConfig:
         default_factory=ContextCompactionConfig
     )
     prompt_cache: PromptCacheConfig = field(default_factory=PromptCacheConfig)
-    execution_guard: ExecutionGuardConfig = field(
-        default_factory=ExecutionGuardConfig
-    )
+    execution_guard: ExecutionGuardConfig = field(default_factory=ExecutionGuardConfig)

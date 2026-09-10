@@ -82,6 +82,7 @@ class ProactiveFinished:
     cache_prompt_tokens: int | None = None
     cache_hit_tokens: int | None = None
     timestamp: datetime | None = None
+    delivery_status: str = "unknown"
 
 
 @dataclass(frozen=True)

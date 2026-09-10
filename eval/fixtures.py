@@ -8,6 +8,8 @@ response or replay an expected result.
 """
 
 import json
+import hashlib
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -20,7 +22,6 @@ from agent.tools.base import Tool
 from core.workflow.models import StepKind, StepSpec, WorkflowStatus
 
 from .models import EvalCase
-
 
 _CONTEXT_VALUES: dict[str, str] = {
     "task": "完成小满真实评测报告",
@@ -49,7 +50,7 @@ _CONTEXT_REQUIRED_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 
-class _EvalSuccessTool(Tool):
+class _EvalRecoveryTool(Tool):
     @property
     def name(self) -> str:
         return self._name
@@ -62,18 +63,41 @@ class _EvalSuccessTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    def __init__(self, name: str, *, failing_tool: str) -> None:
+    def __init__(
+        self, name: str, *, failing_tool: str, result: Mapping[str, Any] | None = None
+    ) -> None:
         self._name = name
         self._description = (
             f"评测夹具提供的只读恢复工具。仅当 {failing_tool} 返回错误时调用；"
-            "读取同一份隔离测试数据并返回成功结果。"
+            "读取预绑定的隔离测试数据；返回值区分有数据、明确为空和数据不可用。"
+        )
+        payload = (
+            dict(result)
+            if result is not None
+            else {
+                "status": "unavailable",
+                "data_kind": "unknown",
+                "message": "夹具未提供备用数据，不能判定没有记录或宣称任务完成。",
+            }
+        )
+        status = payload.get("status")
+        if status not in {"success", "empty", "unavailable"}:
+            raise ValueError("fixture result requires success/empty/unavailable status")
+        if status == "success" and payload.get("data") in (None, "", [], {}):
+            raise ValueError("success fixture requires non-empty data")
+        if status == "empty" and (
+            "data" not in payload or payload["data"] not in ("", [], {})
+        ):
+            raise ValueError("empty fixture requires an explicit empty data value")
+        if status == "unavailable" and payload.get("data") is not None:
+            raise ValueError("unavailable fixture cannot contain data")
+        self._result = json.dumps(
+            {**payload, "fixture": True, "ok": status != "unavailable"},
+            ensure_ascii=False,
         )
 
     async def execute(self, **_: Any) -> str:
-        return json.dumps(
-            {"ok": True, "fixture": True, "message": "fallback completed"},
-            ensure_ascii=False,
-        )
+        return self._result
 
 
 class _EvalFailingTool(Tool):
@@ -148,6 +172,23 @@ class LiveEvalFixtureManager:
             trace_id=trace_id,
             memory_ids_before=self._active_memory_ids(),
         )
+        if prepared.kind not in {
+            "",
+            "existing_memory",
+            "tool_failure",
+            "workflow_checkpoint",
+            "long_context",
+            "artifact",
+            "memory_scenario",
+        }:
+            raise ValueError(f"unsupported fixture: {prepared.kind}")
+        if prepared.kind == "artifact":
+            for path in prepared.fixture.get("paths", []):
+                target = self._artifact_path(path)
+                if target.exists():
+                    raise ValueError(
+                        "artifact target already exists; use a fresh evaluation workspace"
+                    )
         if prepared.kind == "existing_memory":
             self._seed_existing_memory(prepared)
         elif prepared.kind == "tool_failure":
@@ -159,6 +200,25 @@ class LiveEvalFixtureManager:
         return prepared
 
     async def observe(self, prepared: PreparedFixture) -> FixtureObservation:
+        if prepared.kind == "artifact":
+            files = {}
+            for path in prepared.fixture.get("paths", []):
+                target = self._artifact_path(path)
+                record: dict[str, Any] = {"exists": target.is_file()}
+                if target.is_file() and target.stat().st_size <= 1_000_000:
+                    data = target.read_bytes()
+                    record.update(
+                        size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest()
+                    )
+                    try:
+                        record["json"] = json.loads(data.decode("utf-8-sig"))
+                    except (ValueError, UnicodeError):
+                        pass
+                files[str(path)] = record
+            return FixtureObservation(
+                state={"artifacts": files},
+                metadata={"fixture_kind": "artifact", "fixture_applied": True},
+            )
         if prepared.kind == "existing_memory":
             return self._observe_memory_correction(prepared)
         if prepared.kind == "workflow_checkpoint":
@@ -166,16 +226,31 @@ class LiveEvalFixtureManager:
         if prepared.kind == "long_context":
             return self._observe_compaction(prepared)
         return FixtureObservation(
+            state={"new_memory_records": self._new_memory_records(prepared)},
             metadata={
                 "fixture_kind": prepared.kind or "none",
                 "fixture_applied": bool(prepared.kind),
-            }
+            },
         )
 
     def disabled_tools(self, prepared: PreparedFixture) -> list[str]:
         """Restrict a fixture to the capability whose behavior it measures."""
 
         registered = self.runtime.tools.get_registered_names()
+        if prepared.kind == "artifact":
+            return sorted(
+                registered - {"read_file", "write_file", "edit_file", "list_dir"}
+            )
+        if prepared.kind == "memory_scenario":
+            return sorted(
+                registered
+                - {
+                    "recall_memory",
+                    "personal_context",
+                    "search_messages",
+                    "fetch_messages",
+                }
+            )
         if prepared.kind == "tool_failure":
             allowed = {
                 str(prepared.fixture.get("failing_tool") or ""),
@@ -189,6 +264,13 @@ class LiveEvalFixtureManager:
         if prepared.kind == "long_context":
             return sorted(registered)
         return []
+
+    def _artifact_path(self, name: str) -> Path:
+        root = Path(self.runtime.workspace).resolve()
+        path = (root / name).resolve()
+        if path == root or not path.is_relative_to(root):
+            raise ValueError("artifact path must remain inside the isolated workspace")
+        return path
 
     async def cleanup(self, prepared: PreparedFixture) -> None:
         registry = self.runtime.tools
@@ -262,14 +344,32 @@ class LiveEvalFixtureManager:
             return set()
         return {record.id for record in long_term.governance.list_memories(limit=10000)}
 
+    def _new_memory_records(self, prepared: PreparedFixture) -> list[dict[str, Any]]:
+        long_term = self.runtime.memory_runtime.long_term
+        if long_term is None:
+            return []
+        return [
+            {
+                "record_key": record.record_key,
+                "data": dict(record.data),
+                "user_locked": record.user_locked,
+            }
+            for record in long_term.governance.list_memories(limit=10000)
+            if record.id not in prepared.memory_ids_before
+        ]
+
     def _seed_existing_memory(self, prepared: PreparedFixture) -> None:
         long_term = self.runtime.memory_runtime.long_term
         if long_term is None:
-            raise RuntimeError("existing_memory fixture requires governed long-term memory")
+            raise RuntimeError(
+                "existing_memory fixture requires governed long-term memory"
+            )
         key = str(prepared.fixture.get("preference_key") or "").strip()
         old = str(prepared.fixture.get("old_value") or "").strip()
         if not key or not old:
-            raise ValueError("existing_memory fixture requires preference_key and old_value")
+            raise ValueError(
+                "existing_memory fixture requires preference_key and old_value"
+            )
         result = long_term.ingest_candidates(
             [
                 {
@@ -296,7 +396,13 @@ class LiveEvalFixtureManager:
         failing = str(prepared.fixture.get("failing_tool") or "").strip()
         fallback = str(prepared.fixture.get("fallback_tool") or "").strip()
         if not failing or not fallback:
-            raise ValueError("tool_failure fixture requires failing_tool and fallback_tool")
+            raise ValueError(
+                "tool_failure fixture requires failing_tool and fallback_tool"
+            )
+        result = prepared.fixture.get("result")
+        if result is not None and not isinstance(result, Mapping):
+            raise ValueError("fixture result must be an object")
+        recovery_tool = _EvalRecoveryTool(fallback, failing_tool=failing, result=result)
         for name in (failing, fallback):
             existing = registry.get_tool(name)
             document = registry.get_document(name)
@@ -309,7 +415,7 @@ class LiveEvalFixtureManager:
             search_hint=f"评测 首选 失败 后改用 {fallback}",
         )
         registry.register(
-            _EvalSuccessTool(fallback, failing_tool=failing),
+            recovery_tool,
             always_on=True,
             risk="read-only",
             search_hint=f"评测 备用 恢复 {failing} 失败后使用",
@@ -395,15 +501,12 @@ class LiveEvalFixtureManager:
         filler = "这是用于触发真实 token 水位摘要的旧执行证据。" * 42
         for index in range(12):
             user_content = (
-                (
-                    "以下是继续任务必须逐项保留的结构化状态：\n"
-                    + "\n".join(marker_lines)
-                    + "\n"
-                    if index in {0, 3, 6}
-                    else ""
-                )
-                + f"旧回合 {index}：{filler}"
-            )
+                "以下是继续任务必须逐项保留的结构化状态：\n"
+                + "\n".join(marker_lines)
+                + "\n"
+                if index in {0, 3, 6}
+                else ""
+            ) + f"旧回合 {index}：{filler}"
             session.add_message("user", user_content)
             extra: dict[str, Any] = {}
             if index >= 9:
@@ -525,7 +628,14 @@ class LiveEvalFixtureManager:
         preserved: list[str] = []
         for key in requested:
             if key == "system_prefix":
-                if getattr(getattr(self.runtime.loop, "_reasoner", None), "_prompt_cache", None) is not None:
+                if (
+                    getattr(
+                        getattr(self.runtime.loop, "_reasoner", None),
+                        "_prompt_cache",
+                        None,
+                    )
+                    is not None
+                ):
                     preserved.append(key)
                 continue
             if key == "recent_tool_rounds":

@@ -165,8 +165,8 @@ async def test_default_memory_engine_consumes_shared_semantic_batch() -> None:
         "读取当前工具清单",
         "根据清单给出精确数量",
     ]
-    assert rule_write["extra"]["authority"] == "user"
-    assert rule_write["extra"]["lifecycle_status"] == "active"
+    assert rule_write["extra"]["authority"] == "learned"
+    assert rule_write["extra"]["lifecycle_status"] == "proposed"
     assert rule_write["execution_verified"] is False
     assert rule_write["source_ref"].startswith("semantic_1#r:")
     await event_bus.aclose()
@@ -402,13 +402,21 @@ async def test_execution_memory_feedback_only_uses_matching_tool_outcome(
             tool_chain_raw=[
                 {
                     "text": "",
-                    "calls": [{"name": "shell", "status": "success", "result": "ok"}],
+                    "calls": [
+                        {
+                            "call_id": "c1",
+                            "name": "shell",
+                            "status": "success",
+                            "result": "ok",
+                        }
+                    ],
                 }
             ],
             extra={
                 "memory_retrieval": {
                     "execution_memory_ids": [item_id],
                     "used_execution_memory_ids": [item_id],
+                    "execution_memory_uses": {item_id: ["c1"]},
                 }
             },
         )

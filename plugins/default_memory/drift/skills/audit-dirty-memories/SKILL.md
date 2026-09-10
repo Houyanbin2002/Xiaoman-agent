@@ -131,7 +131,7 @@ suspicious_reported：
 
 - 先 `message_push` 发给用户。
 - 消息必须包含 `memory_id`、当前记忆摘要、可疑原因、原始证据说明、纠正提示。
-- `message_push` 成功后调用 `finish_drift(status="completed", message_result="sent")`。
+- `message_push` 暂存候选后调用 `finish_drift(status="completed", message_result="proposed")`；此时尚未发送，统一主动链路会执行免打扰、去重和投递。
 - `journal_append` 同样追加 `entry_type=memory_audited`，`payload.result` 写 `suspicious_reported`。
 - `cursor_update` 清空 active 候选，并把 `next_action` 写成 `sample`。
 

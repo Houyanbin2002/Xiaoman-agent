@@ -14,7 +14,10 @@ def load_cases(path: str | Path) -> list[EvalCase]:
     if not source.exists():
         raise FileNotFoundError(source)
     cases: list[EvalCase] = []
-    for line_number, raw in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+    seen: set[str] = set()
+    for line_number, raw in enumerate(
+        source.read_text(encoding="utf-8").splitlines(), 1
+    ):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -25,6 +28,25 @@ def load_cases(path: str | Path) -> list[EvalCase]:
         case = EvalCase.from_dict(value)
         if not case.case_id:
             raise ValueError(f"missing case_id at {source}:{line_number}")
+        if case.case_id in seen:
+            raise ValueError(f"duplicate case_id: {case.case_id}")
+        seen.add(case.case_id)
+        turns = case.metadata.get("turns", [])
+        if not isinstance(turns, list) or any(
+            not isinstance(t, dict) or not str(t.get("input", "")).strip()
+            for t in turns
+        ):
+            raise ValueError(f"invalid scenario turns: {case.case_id}")
+        from .scorers import canonical_rubric
+
+        rubric = canonical_rubric(case)
+        ids = [c.criterion_id for c in rubric]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"duplicate criterion IDs: {case.case_id}")
+        acceptance = case.metadata.get("acceptance", {})
+        for key in ("objective_checks", "blocked_checks", "delivery_checks"):
+            if any(name not in ids for name in acceptance.get(key, [])):
+                raise ValueError(f"unknown acceptance check: {case.case_id}.{key}")
         cases.append(case)
     return cases
 
@@ -52,7 +74,11 @@ def mine_hard_cases(
     """
     candidates: list[dict] = []
     for item in results:
-        if float(item.get("reward", 1.0)) >= min_reward and item.get("passed", True):
+        if (
+            float(item.get("reward", 1.0)) >= min_reward
+            and item.get("passed", True)
+            and item.get("assessment", {}).get("accepted", True)
+        ):
             continue
         if tags and not tags.intersection(set(item.get("tags", ()) or ())):
             continue

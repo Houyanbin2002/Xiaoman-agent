@@ -622,13 +622,14 @@ class WorkflowStore:
         *,
         error: str,
         retry_delay_seconds: float,
+        retryable: bool = True,
     ) -> WorkflowInstance:
         with self._transaction() as db:
             resolved = self._require_id(db, workflow_id)
             row = self._require_step_row(db, resolved, step_id)
             attempts = int(row["attempt_count"])
             max_attempts = int(row["max_attempts"])
-            retrying = attempts < max_attempts
+            retrying = retryable and attempts < max_attempts
             next_run_at = (
                 datetime.now(timezone.utc)
                 .__add__(timedelta(seconds=max(0.0, retry_delay_seconds)))

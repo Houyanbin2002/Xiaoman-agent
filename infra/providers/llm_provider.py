@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, TypedDict, cast
 
 from openai import AsyncOpenAI
+from core.llm.request_budget import before_transport_retry
 
 from core.llm.models import (
     ContentSafetyError,
@@ -54,6 +55,7 @@ class _CompletionView:
     message: object
     usage: object | None
     finish_reason: str | None
+
 
 # 安全审查错误码（各厂商）
 _SAFETY_ERROR_CODES = {
@@ -253,7 +255,11 @@ class LLMProvider:
         payload_snapshot_enabled: bool | None = None,
     ) -> None:
         normalized_base_url = _normalize_openai_base_url(base_url)
-        self._client = AsyncOpenAI(api_key=api_key, base_url=normalized_base_url)
+        # One retry owner: SDK retries are otherwise invisible to both our
+        # timeout and the shared execution budget.
+        self._client = AsyncOpenAI(
+            api_key=api_key, base_url=normalized_base_url, max_retries=0
+        )
         self._retired_clients: list[AsyncOpenAI] = []
         self._base_url = normalized_base_url or ""
         self._provider_name = provider_name
@@ -293,7 +299,9 @@ class LLMProvider:
         """
 
         normalized_base_url = _normalize_openai_base_url(base_url)
-        next_client = AsyncOpenAI(api_key=api_key, base_url=normalized_base_url)
+        next_client = AsyncOpenAI(
+            api_key=api_key, base_url=normalized_base_url, max_retries=0
+        )
         self._retired_clients.append(self._client)
         self._client = next_client
         self._base_url = normalized_base_url or ""
@@ -372,9 +380,7 @@ class LLMProvider:
             )
 
         completion = _read_completion(
-            await self._create_with_retry(
-                kwargs, client=client, base_url=base_url
-            )
+            await self._create_with_retry(kwargs, client=client, base_url=base_url)
         )
         msg = completion.message
 
@@ -403,9 +409,7 @@ class LLMProvider:
         input_tokens, output_tokens, total_tokens = _extract_token_usage(
             completion.usage
         )
-        cache_prompt_tokens, cache_hit_tokens = _extract_cache_usage(
-            completion.usage
-        )
+        cache_prompt_tokens, cache_hit_tokens = _extract_cache_usage(completion.usage)
         if tool_calls:
             provider_fields = strategy.provider_fields_for_tool_call(
                 provider_fields,
@@ -560,11 +564,11 @@ class LLMProvider:
         client: AsyncOpenAI,
         base_url: str,
     ) -> object:
-        _ = _save_llm_payload_snapshot(
-            kwargs, enabled=self._payload_snapshot_enabled
-        )
+        _ = _save_llm_payload_snapshot(kwargs, enabled=self._payload_snapshot_enabled)
         last_err: Exception | None = None
         for attempt in range(self._max_retries + 1):
+            if attempt and (budget_hook := before_transport_retry.get()) is not None:
+                budget_hook()
             try:
                 request = cast(
                     Awaitable[object],
@@ -769,9 +773,7 @@ def _iter_tool_call_deltas(delta: object) -> list[_ToolCallDelta]:
                 "index": _coerce_int(_get_field(item, "index")) or idx,
                 "id": str(_get_field(item, "id") or ""),
                 "name": str(_get_field(function_obj, "name") or ""),
-                "arguments": str(
-                    _get_field(function_obj, "arguments") or ""
-                ),
+                "arguments": str(_get_field(function_obj, "arguments") or ""),
             }
         )
     return result
@@ -819,14 +821,20 @@ def _deepseek_thinking_disabled(extra_body: dict[str, Any]) -> bool:
     thinking = extra_body.get("thinking")
     if not isinstance(thinking, Mapping):
         return False
-    return str(cast(Mapping[object, object], thinking).get("type", "") or "").lower() == "disabled"
+    return (
+        str(cast(Mapping[object, object], thinking).get("type", "") or "").lower()
+        == "disabled"
+    )
 
 
 def _deepseek_thinking_enabled(extra_body: dict[str, Any]) -> bool:
     thinking = extra_body.get("thinking")
     if not isinstance(thinking, Mapping):
         return False
-    return str(cast(Mapping[object, object], thinking).get("type", "") or "").lower() == "enabled"
+    return (
+        str(cast(Mapping[object, object], thinking).get("type", "") or "").lower()
+        == "enabled"
+    )
 
 
 def _normalize_deepseek_effort(value: str) -> str:

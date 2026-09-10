@@ -7,7 +7,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from agent.tools.base import Tool, ToolResult
-from agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from agent.tools.filesystem import (
+    EditFileTool,
+    ListDirTool,
+    ReadFileTool,
+    WriteFileTool,
+)
 from agent.tools.registry import ToolRegistry
 from bus.events_lifecycle import DriftFinished
 from proactive_v2.context import AgentTickContext
@@ -31,14 +36,14 @@ class DriftToolDeps:
     memory: Any = None
     recent_chat_fn: Any = None
     shared_tools: ToolRegistry | None = None
-    send_message_fn: Any = None
     event_bus: Any = None
 
 
-class SendMessageTool(Tool):
-    def __init__(self, ctx: AgentTickContext, send_message_fn: Any) -> None:
+class ProposeNotificationTool(Tool):
+    """Stage an exploration candidate; only the proactive delivery phase sends."""
+
+    def __init__(self, ctx: AgentTickContext) -> None:
         self._ctx = ctx
-        self._send_message_fn = send_message_fn
 
     @property
     def name(self) -> str:
@@ -47,8 +52,9 @@ class SendMessageTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "向用户发送一条消息，可附带图片。单次 Drift run 最多只能调用一次。\n"
-            "channel 和 chat_id 在 Drift 上下文中已由配置预设，可省略不填。"
+            "暂存一条通知候选，可附带图片；不会立即发送。单次探索最多一次。\n"
+            "随后调用 finish_drift(message_result=proposed)。统一主动链路会决定是否投递，"
+            "并执行去重、免打扰与取消校验。不要宣称消息已发送。"
         )
 
     @property
@@ -57,19 +63,14 @@ class SendMessageTool(Tool):
             "type": "object",
             "properties": {
                 "message": {"type": "string", "description": "要发送的消息内容"},
-                "image": {"type": "string", "description": "要发送的一张图片本地路径或 URL"},
+                "image": {
+                    "type": "string",
+                    "description": "要发送的一张图片本地路径或 URL",
+                },
                 "media": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "要随消息发送的图片路径或 URL 列表",
-                },
-                "channel": {
-                    "type": "string",
-                    "description": "目标渠道（Drift 上下文可省略，已由配置预设）",
-                },
-                "chat_id": {
-                    "type": "string",
-                    "description": "目标会话 ID（Drift 上下文可省略，已由配置预设）",
                 },
             },
             "required": [],
@@ -80,16 +81,10 @@ class SendMessageTool(Tool):
         message: str = "",
         image: str = "",
         media: list[str] | str | None = None,
-        channel: str = "",
-        chat_id: str = "",
     ) -> str:
-        _ = (channel, chat_id)
         text = normalize_outbound_text(message or "").strip()
         media_paths = self._normalize_media(image=image, media=media)
-        if self._send_message_fn is None:
-            logger.info("[drift_tools] message_push unavailable")
-            return json.dumps({"error": "message_push not configured"}, ensure_ascii=False)
-        if self._ctx.drift_message_sent:
+        if self._ctx.has_notification_draft:
             logger.info("[drift_tools] message_push rejected: already used")
             return json.dumps(
                 {"error": "message_push already used in this drift run"},
@@ -97,17 +92,20 @@ class SendMessageTool(Tool):
             )
         if not text and not media_paths:
             logger.info("[drift_tools] message_push rejected: empty message and media")
-            return json.dumps({"error": "message or media is required"}, ensure_ascii=False)
-        ok = await self._send_message_fn(text, media_paths)
-        if not ok:
-            logger.warning("[drift_tools] message_push failed")
-            return json.dumps({"error": "message_push failed"}, ensure_ascii=False)
-        self._ctx.drift_message_sent = True
-        logger.info("[drift_tools] message_push ok")
-        return json.dumps({"ok": True}, ensure_ascii=False)
+            return json.dumps(
+                {"error": "message or media is required"}, ensure_ascii=False
+            )
+        self._ctx.draft_message = text
+        self._ctx.draft_media = media_paths
+        self._ctx.draft_evidence = []
+        return json.dumps(
+            {"ok": True, "status": "proposed", "sent": False}, ensure_ascii=False
+        )
 
     @staticmethod
-    def _normalize_media(*, image: str = "", media: list[str] | str | None = None) -> list[str]:
+    def _normalize_media(
+        *, image: str = "", media: list[str] | str | None = None
+    ) -> list[str]:
         paths: list[str] = []
         if image:
             paths.append(str(image).strip())
@@ -152,12 +150,15 @@ class FinishDriftTool(Tool):
                         "waiting 表示正在等待用户回复或外部条件。"
                     ),
                 },
-                "briefing": {"type": "string", "description": "本轮做了什么的一句话摘要"},
+                "briefing": {
+                    "type": "string",
+                    "description": "本轮做了什么的一句话摘要",
+                },
                 "message_result": {
                     "type": "string",
-                    "enum": ["sent", "silent"],
+                    "enum": ["proposed", "silent"],
                     "description": (
-                        "sent 表示本轮已经成功调用 message_push；"
+                        "proposed 表示已暂存通知候选，尚未发送；"
                         "silent 表示本轮确认不该打扰用户，静默结束。"
                     ),
                 },
@@ -200,7 +201,9 @@ class FinishDriftTool(Tool):
     ) -> str:
         skill_name = str(skill_used or "").strip()
         if skill_name not in self._store.valid_skill_names():
-            logger.info("[drift_tools] finish_drift rejected unknown skill=%s", skill_name)
+            logger.info(
+                "[drift_tools] finish_drift rejected unknown skill=%s", skill_name
+            )
             return json.dumps(
                 {"error": f"unknown skill: {skill_name}"},
                 ensure_ascii=False,
@@ -232,19 +235,22 @@ class FinishDriftTool(Tool):
                 ensure_ascii=False,
             )
         message_result_value = str(message_result or "").strip()
-        if message_result_value not in {"sent", "silent"}:
+        # Installed user skills may still use the old value; never persist it as a receipt.
+        if message_result_value == "sent":
+            message_result_value = "proposed"
+        if message_result_value not in {"proposed", "silent"}:
             return json.dumps(
-                {"error": "message_result must be one of: sent, silent"},
+                {"error": "message_result must be one of: proposed, silent"},
                 ensure_ascii=False,
             )
-        if message_result_value == "sent" and not self._ctx.drift_message_sent:
+        if message_result_value == "proposed" and not self._ctx.has_notification_draft:
             return json.dumps(
-                {"error": "message_result=sent requires successful message_push first"},
+                {"error": "message_result=proposed requires a notification draft"},
                 ensure_ascii=False,
             )
-        if message_result_value == "silent" and self._ctx.drift_message_sent:
+        if message_result_value == "silent" and self._ctx.has_notification_draft:
             return json.dumps(
-                {"error": "message_result=silent conflicts with successful message_push"},
+                {"error": "message_result=silent conflicts with a notification draft"},
                 ensure_ascii=False,
             )
         if cursor_update is not None and not isinstance(cursor_update, dict):
@@ -256,9 +262,7 @@ class FinishDriftTool(Tool):
         if journal_error:
             return json.dumps({"error": journal_error}, ensure_ascii=False)
         note_text = (
-            str(global_note_update).strip()
-            if global_note_update is not None
-            else None
+            str(global_note_update).strip() if global_note_update is not None else None
         )
         if not selected:
             self._ctx.drift_selected_skill = skill_name
@@ -359,7 +363,9 @@ class SelectSkillTool(Tool):
             )
         skill_dir = self._store.skill_dir_for(name)
         if skill_dir is None:
-            return json.dumps({"error": f"skill not mounted: {name}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"skill not mounted: {name}"}, ensure_ascii=False
+            )
         skill_file = skill_dir / "SKILL.md"
         try:
             content = skill_file.read_text(encoding="utf-8")
@@ -484,7 +490,11 @@ class MountServerTool(Tool):
         new = names - self._target.get_registered_names()
         if not new:
             return json.dumps(
-                {"ok": True, "message": f"'{server}' 已挂载，无新增工具", "tools": sorted(names)},
+                {
+                    "ok": True,
+                    "message": f"'{server}' 已挂载，无新增工具",
+                    "tools": sorted(names),
+                },
                 ensure_ascii=False,
             )
         for name in sorted(new):
@@ -496,7 +506,9 @@ class MountServerTool(Tool):
                     source_type="mcp",
                     source_name=server,
                 )
-        logger.info("[drift_tools] mount_server ok: server=%s new=%s", server, sorted(new))
+        logger.info(
+            "[drift_tools] mount_server ok: server=%s new=%s", server, sorted(new)
+        )
         return json.dumps(
             {"ok": True, "tools": sorted(names), "new": sorted(new)},
             ensure_ascii=False,
@@ -743,8 +755,8 @@ def build_drift_tool_registry(
         tools.register(MountServerTool(shared, tools), risk="read-only")
 
     tools.register(
-        SendMessageTool(ctx, deps.send_message_fn),
-        risk="external-side-effect",
+        ProposeNotificationTool(ctx),
+        risk="write",
     )
     tools.register(FinishDriftTool(ctx, deps.store, deps.event_bus), risk="write")
     return tools

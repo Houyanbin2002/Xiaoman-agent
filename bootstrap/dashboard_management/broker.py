@@ -14,6 +14,7 @@ from agent.permissions import (
     normalize_permission_mode,
 )
 from bus.events_lifecycle import StreamDeltaReady
+from agent.runtime.reasoning_policy import normalize_reasoning_effort
 
 from .attachments import AttachmentError, DashboardAttachmentStore
 
@@ -32,6 +33,8 @@ class DashboardChatRun:
     chat_id: str
     prompt: str
     permission_mode: PermissionMode = DEFAULT_DASHBOARD_PERMISSION_MODE
+    reasoning_effort: str = ""
+    autonomous_delegation: bool = False
     started_at: str = field(
         default_factory=lambda: datetime.now().astimezone().isoformat()
     )
@@ -53,6 +56,8 @@ class DashboardChatRun:
             "chat_id": self.chat_id,
             "prompt": self.prompt,
             "permission_mode": self.permission_mode,
+            "reasoning_effort": self.reasoning_effort,
+            "autonomous_delegation": self.autonomous_delegation,
             "title": _chat_title(self.prompt),
             "started_at": self.started_at,
             "content": self.content,
@@ -71,9 +76,7 @@ class DashboardChatBroker:
         agent_loop: Any | None = None,
         attachments: DashboardAttachmentStore | None = None,
     ) -> None:
-        self._subscribers: dict[
-            str, set[asyncio.Queue[dict[str, Any]]]
-        ] = {}
+        self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
         self._runs: dict[str, DashboardChatRun] = {}
         self._agent_loop = agent_loop
         self._attachments = attachments
@@ -118,11 +121,16 @@ class DashboardChatBroker:
         attachments: list[dict[str, object]] | None = None,
         run_id: str = "",
         permission_mode: str = DEFAULT_DASHBOARD_PERMISSION_MODE,
+        reasoning_effort: str = "",
+        autonomous_delegation: bool = False,
     ) -> tuple[bool, dict[str, Any]]:
         current = self._runs.get(session_key)
         if current is not None:
             return False, current.snapshot()
 
+        if not isinstance(autonomous_delegation, bool):
+            raise ValueError("autonomous_delegation 必须是布尔值")
+        selected_effort = normalize_reasoning_effort(reasoning_effort)
         await self._ensure_session(agent_loop, session_key, content)
         run = DashboardChatRun(
             run_id=run_id.strip() or uuid4().hex,
@@ -133,6 +141,8 @@ class DashboardChatBroker:
                 permission_mode,
                 fallback=DEFAULT_DASHBOARD_PERMISSION_MODE,
             ),
+            reasoning_effort=selected_effort,
+            autonomous_delegation=autonomous_delegation,
             media=list(media or ()),
             attachments=list(attachments or ()),
         )
@@ -148,7 +158,11 @@ class DashboardChatBroker:
         run.status = "stopping"
         self._broadcast(session_key, run.snapshot())
         controller = getattr(agent_loop, "request_interrupt", None)
-        result = controller(session_key, sender="dashboard", command="stop") if callable(controller) else None
+        result = (
+            controller(session_key, sender="dashboard", command="stop")
+            if callable(controller)
+            else None
+        )
         if getattr(result, "status", "idle") != "interrupted":
             run.task.cancel()
         return True
@@ -166,6 +180,8 @@ class DashboardChatBroker:
                 chat_id=run.chat_id,
                 stream_events=True,
                 permission_mode=run.permission_mode,
+                reasoning_effort=run.reasoning_effort,
+                autonomous_delegation=run.autonomous_delegation,
                 media=run.media,
             )
             result = (

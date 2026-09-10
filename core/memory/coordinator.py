@@ -28,6 +28,7 @@ from core.memory.execution import ExecutionMemoryState
 from core.memory.personal_retrieval import PersonalMemoryQueryResult
 from core.memory.personal_semantic import PersonalSemanticRecallService
 from core.personal.models import PersonalRecord
+from core.memory.query_embeddings import query_embedding_scope
 
 
 class GovernedPersonalMemorySource(Protocol):
@@ -158,6 +159,7 @@ class CompositeMemoryEngine:
         # not receive a second copy of the same turn.
         return await self._episodic.ingest(request)
 
+    @query_embedding_scope()
     async def query(self, request: MemoryQuery) -> MemoryQueryResult:
         if request.intent in {"procedure", "execution"}:
             return await self._structured.query(replace(request, intent="execution"))

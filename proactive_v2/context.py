@@ -14,8 +14,10 @@ class AgentTickContext:
     context_as_fallback_open: bool = False
 
     # Gateway 预取结果（_run_loop 启动前由 DataGateway 填充）
-    fetched_alerts: list[dict] = field(default_factory=list)    # 含 ack_server 字段
-    fetched_contents: list[dict] = field(default_factory=list)  # 含 ack_server 字段（从 content_meta 还原）
+    fetched_alerts: list[dict] = field(default_factory=list)  # 含 ack_server 字段
+    fetched_contents: list[dict] = field(
+        default_factory=list
+    )  # 含 ack_server 字段（从 content_meta 还原）
     fetched_context: list[dict] = field(default_factory=list)
     alerts_fetched: bool = False
     contents_fetched: bool = False
@@ -24,28 +26,38 @@ class AgentTickContext:
     content_store: dict[str, str] = field(default_factory=dict)
 
     # 过滤结果（loop 中逐步写入，均为复合键 "{ack_server}:{id}"）
-    discarded_item_ids: set[str] = field(default_factory=set)   # mark_not_interesting 写入
-    interesting_item_ids: set[str] = field(default_factory=set) # recall_memory 后立即写入，不可撤销
+    discarded_item_ids: set[str] = field(
+        default_factory=set
+    )  # mark_not_interesting 写入
+    interesting_item_ids: set[str] = field(
+        default_factory=set
+    )  # recall_memory 后立即写入，不可撤销
 
     # 终止状态（由 finish_turn 写入）
     terminal_action: Literal["reply", "skip"] | None = None
     skip_reason: str = ""
     skip_note: str = ""
     draft_message: str = ""
+    draft_media: list[str] = field(default_factory=list)
     draft_evidence: list[str] = field(default_factory=list)
     draft_reason: str = ""
     draft_action: str = ""
     final_message: str = ""
-    cited_item_ids: list[str] = field(default_factory=list)     # 复合键列表
+    final_media: list[str] = field(default_factory=list)
+    delivery_status: str = "not_requested"
+    cited_item_ids: list[str] = field(default_factory=list)  # 复合键列表
     steps_taken: int = 0
     drift_entered: bool = False
     drift_finished: bool = False
-    drift_message_sent: bool = False
     drift_selected_skill: str = ""
     llm_call_count: int = 0
     cache_prompt_tokens: int = 0
     cache_hit_tokens: int = 0
     cache_seen: bool = False
+
+    @property
+    def has_notification_draft(self) -> bool:
+        return bool(self.draft_message.strip() or self.draft_media)
 
     def record_llm_cache(
         self,

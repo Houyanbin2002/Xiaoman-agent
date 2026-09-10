@@ -46,6 +46,14 @@ class RecentActivityStore:
                     source_ref TEXT PRIMARY KEY, activity_id TEXT NOT NULL,
                     outcome TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS recent_activity_sources (
+                    source_ref TEXT NOT NULL, activity_id TEXT NOT NULL,
+                    PRIMARY KEY(source_ref, activity_id)
+                );
+                INSERT OR IGNORE INTO recent_activity_sources
+                    SELECT 'message:' || j.value, a.id
+                    FROM recent_activities a, json_each(a.source_refs) j
+                    WHERE json_valid(a.source_refs);
             """)
             db.commit()
         finally:
@@ -84,6 +92,17 @@ class RecentActivityStore:
                         "INSERT INTO recent_activity_updates VALUES (?,?,?,?)",
                         (source_ref, activity_id, outcome, now.isoformat()),
                     )
+                    if outcome == "applied":
+                        db.executemany(
+                            "INSERT OR IGNORE INTO recent_activity_sources VALUES (?,?)",
+                            [
+                                ("update:" + source_ref, activity_id),
+                                *(
+                                    ("message:" + ref, activity_id)
+                                    for ref in item.source_message_ids
+                                ),
+                            ],
+                        )
         finally:
             db.close()
 
@@ -171,6 +190,40 @@ class RecentActivityStore:
             ),
         )
         return activity_id, "applied"
+
+    def recall_states(self, refs: list[str]) -> dict[str, list[dict[str, object]]]:
+        """Resolve exact evidence IDs in batches, not the bounded UI snapshot.
+
+        All prior evidence remains linked after a revision or process restart.
+        Rejected/stale updates never gain a lifecycle association.
+        """
+        refs = list(dict.fromkeys(refs))
+        result: dict[str, list[dict[str, object]]] = {}
+        if not refs:
+            return result
+        now = _now().isoformat()
+        db = self._connect()
+        try:
+            for start in range(0, len(refs), 400):
+                chunk = refs[start : start + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = db.execute(
+                    f"""SELECT s.source_ref, a.id, a.status, a.revision, a.expires_at
+                        FROM recent_activity_sources s JOIN recent_activities a ON a.id=s.activity_id
+                        WHERE s.source_ref IN ({placeholders})""",
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    state = {
+                        key: row[key]
+                        for key in ("id", "status", "revision", "expires_at")
+                    }
+                    if state["status"] in _OPEN and str(state["expires_at"]) <= now:
+                        state["status"] = "expired"
+                    result.setdefault(row["source_ref"], []).append(state)
+            return result
+        finally:
+            db.close()
 
     def snapshot(self, *, limit: int = 30) -> list[dict[str, Any]]:
         now = _now()

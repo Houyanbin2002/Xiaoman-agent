@@ -151,7 +151,7 @@ def _execution_episode(
 
     calls = [_compact_call(call) for call in raw_calls]
     failures = [
-        index for index, call in enumerate(calls) if call["outcome"] != "success"
+        index for index, call in enumerate(calls) if call["outcome"] in {"failure", "blocked", "denied"}
     ]
     successes = [
         index for index, call in enumerate(calls) if call["outcome"] == "success"
@@ -165,9 +165,6 @@ def _execution_episode(
         signals.append("permission_or_capability_constraint")
     if any(_CONSTRAINT_RE.search(str(call.get("result") or "")) for call in calls):
         signals.append("environment_constraint")
-    unique_tools = {str(call.get("tool") or "") for call in calls}
-    if len(calls) >= 3 and len(unique_tools) >= 2 and not failures:
-        signals.append("verified_multistep")
 
     # Ordinary one-off successes never enter the semantic model.
     if not signals:
@@ -203,7 +200,7 @@ def _execution_episode(
 def _compact_call(call: Mapping[str, object]) -> dict[str, object]:
     status = str(call.get("status") or "").strip().lower()
     result = call.get("result")
-    outcome = _call_outcome(status=status, result=result)
+    outcome = execution_call_outcome(status=status, result=result)
     arguments = call.get("final_arguments") or call.get("arguments")
     return {
         "tool": sanitize_text(call.get("name"), limit=120),
@@ -213,22 +210,29 @@ def _compact_call(call: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _call_outcome(*, status: str, result: object) -> str:
+def execution_call_outcome(*, status: str, result: object) -> str:
     if status in {"blocked", "denied"}:
         return status
     if status in _ERROR_STATUSES:
         return "failure"
     parsed = _json_value(result)
     if isinstance(parsed, Mapping):
+        process_status = str(parsed.get("status") or "").strip().lower()
+        if process_status in {"running", "pending", "queued", "started"}:
+            return "unknown"
         exit_code = parsed.get("exit_code")
         if isinstance(exit_code, int) and exit_code != 0:
             return "failure"
         if parsed.get("success") is False or parsed.get("interrupted") is True:
             return "failure"
+        if process_status in {"failed", "error", "cancelled", "interrupted"}:
+            return "failure"
+        if exit_code == 0 or parsed.get("success") is True:
+            return "success"
     text = str(result or "").strip()
     if re.match(r"(?i)^(error|failed|failure|错误|失败)\s*[:：]", text):
         return "failure"
-    return "success" if status == "success" or result is not None else "unknown"
+    return "success" if status == "success" else "unknown"
 
 
 def _compact_arguments(value: object) -> dict[str, object]:
