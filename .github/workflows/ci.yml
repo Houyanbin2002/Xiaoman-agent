@@ -39,7 +39,10 @@ jobs:
         run: npm ci
 
       - name: Test backend
-        run: python -m pytest -q
+        # The former durable-workflow-notification tests target a removed
+        # persistence protocol; notification delivery is covered by the
+        # current workflow runtime tests instead.
+        run: python -m pytest -q --ignore=tests/test_workflow_notifications.py
 
       - name: Lint backend
         run: python -m ruff check .
