@@ -364,7 +364,11 @@ class LangGraphAgentExecutor:
             if snapshot.next:
                 graph_input = None
                 reasoning_patch: dict[str, Any] = {}
-                if reasoning_effort or not snapshot.values.get("reasoning_policy"):
+                # A checkpoint represents an in-flight execution.  Preserve
+                # the policy selected when that execution started, even when
+                # the caller supplies a different override while resuming.
+                # Recompute only for legacy checkpoints that have no policy.
+                if not snapshot.values.get("reasoning_policy"):
                     decision = ReasoningPolicy(self._host._llm_config.reasoning).decide(
                         reasoning_effort,
                         source=self._host._execution_policy.source,

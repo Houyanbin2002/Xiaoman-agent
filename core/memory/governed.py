@@ -335,11 +335,26 @@ class GovernedLongTermMemory:
             )
             confidence = self._confidence(raw.get("confidence"), tag=tag)
             origin = str(raw.get("origin") or "").strip().lower()
-            user_confirmed = False
-            actor = "assistant"
+            # Semantic batches are model-extracted data and must carry a
+            # verified verbatim quote before they can enter the governed
+            # store.  Other callers (fixtures, migrations and the public
+            # ingestion API) use the historical user-evidence marker and do
+            # not have a message source available for quote verification.
+            semantic_batch = source == "conversation_semantic_batch"
             quote_verified = raw.get("_evidence_quote_verified") is True
-            review_reason = "" if quote_verified else "unverified_extraction_evidence"
-            if origin == "user_correction" or tag == "correction":
+            user_confirmed = bool(
+                not semantic_batch
+                and source_message_id
+                and raw.get("_user_evidence_verified") is True
+                and origin in {"explicit_user", "user_correction"}
+            )
+            actor = "user" if user_confirmed else "assistant"
+            review_reason = (
+                ("" if quote_verified else "unverified_extraction_evidence")
+                if semantic_batch
+                else ""
+            )
+            if (origin == "user_correction" or tag == "correction") and semantic_batch:
                 review_reason = "extracted_correction_requires_confirmation"
 
             result = self.governance.propose(
